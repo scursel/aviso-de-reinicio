@@ -65,16 +65,6 @@ winget install Scursel.AvisoDeReinicio
 *(disponível assim que o manifesto for aprovado no repositório
 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs))*
 
-### Via Chocolatey
-
-O pacote está pronto em [`chocolatey/`](chocolatey/) — para publicar no
-repositório da comunidade:
-
-```
-choco pack chocolatey\aviso-de-reinicio.nuspec
-choco push aviso-de-reinicio.1.0.2.nupkg --api-key SUA_CHAVE
-```
-
 ## Uso
 
 - **Configurar**: clique com o botão direito no ícone azul da bandeja →
