@@ -7,7 +7,7 @@ $packageArgs = @{
   url            = $url
   checksum       = $checksum
   checksumType   = 'sha256'
-  silentArgs     = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=""autostart""'
+  silentArgs     = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS="autostart"'
   validExitCodes = @(0)
 }
 Install-ChocolateyPackage @packageArgs
