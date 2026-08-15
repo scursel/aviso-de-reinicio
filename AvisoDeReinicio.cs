@@ -337,6 +337,12 @@ namespace AvisoDeReinicio
             // Maquina isenta? Arquivo "DesativarAviso.txt" na pasta de dados
             // desliga os pop-ups sem desinstalar o programa.
             _disabled = File.Exists(Path.Combine(Program.AppDir, "DesativarAviso.txt"));
+            // Flag de desenvolvimento: abre direto a tela de configuracoes
+            if (Environment.GetCommandLineArgs().Length > 1 &&
+                string.Equals(Environment.GetCommandLineArgs()[1], "--config", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowConfig();
+            }
             if (_disabled) Program.Log("AVISOS_DESATIVADOS", "arquivo_DesativarAviso.txt_presente");
 
             _timer = new System.Windows.Forms.Timer();

@@ -10,6 +10,10 @@ o aviso volta depois de alguns minutos — repetindo **até o computador ser
 reiniciado**. Depois do reinício, o programa para de incomodar até o dia
 seguinte.
 
+[![Licença MIT](https://img.shields.io/badge/Licença-MIT-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/scursel/aviso-de-reinicio)](https://github.com/scursel/aviso-de-reinicio/releases)
+[![Downloads](https://img.shields.io/github/downloads/scursel/aviso-de-reinicio/total)](https://github.com/scursel/aviso-de-reinicio/releases)
+
 Não precisa de administrador, não precisa instalar nada: é um único `.exe`
 que usa o .NET Framework que já vem no Windows 10/11.
 
@@ -30,9 +34,19 @@ que usa o .NET Framework que já vem no Windows 10/11.
 - ✅ Isenção por máquina via arquivo `DesativarAviso.txt`
 - ✅ Rede de segurança: tarefa agendada relança o programa no logon se ele for fechado
 
+## Capturas de tela
+
+**Pop-up diário** — fica sempre por cima das outras janelas e não tem X para fechar:
+
+![Pop-up do Aviso de Reinício](docs/screenshots/popup.png)
+
+**Tela de configurações** — horário, adiamento, reinício forçado, estatísticas e log:
+
+![Tela de configurações](docs/screenshots/configuracoes.png)
+
 ## Instalação
 
-1. Baixe o `Instalador-AvisoDeReinicio-v1.0.0.exe` da página de
+1. Baixe o instalador (`Instalador-AvisoDeReinicio-*.exe`) na página de
    [Releases](https://github.com/scursel/aviso-de-reinicio/releases) (ou compile
    o seu, veja abaixo).
 2. Execute o instalador (não precisa de administrador).
@@ -41,6 +55,25 @@ que usa o .NET Framework que já vem no Windows 10/11.
 
 Também dá para usar o `AvisoDeReinicio.exe` direto (portátil): dois cliques e
 ele já funciona, sem instalar nada.
+
+### Via winget
+
+```
+winget install Scursel.AvisoDeReinicio
+```
+
+*(disponível assim que o manifesto for aprovado no repositório
+[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs))*
+
+### Via Chocolatey
+
+O pacote está pronto em [`chocolatey/`](chocolatey/) — para publicar no
+repositório da comunidade:
+
+```
+choco pack chocolatey\aviso-de-reinicio.nuspec
+choco push aviso-de-reinicio.1.0.1.nupkg --api-key SUA_CHAVE
+```
 
 ## Uso
 
