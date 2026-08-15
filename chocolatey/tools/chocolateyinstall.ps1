@@ -1,6 +1,6 @@
 ﻿$ErrorActionPreference = 'Stop'
-$url      = 'https://github.com/scursel/aviso-de-reinicio/releases/download/v1.0.1/Instalador-AvisoDeReinicio-v1.0.1.exe'
-$checksum = 'e0dc42270742a05b0f2e0fc35dd6fbe885eae45e31711bfb39e8d8d8bbaad2df'
+$url      = 'https://github.com/scursel/aviso-de-reinicio/releases/download/v1.0.2/Instalador-AvisoDeReinicio-v1.0.2.exe'
+$checksum = 'a1b8299c9f2814e474ebd1f216a8ab0daeda286830d3c08b915b661756652128'
 $packageArgs = @{
   packageName    = 'aviso-de-reinicio'
   fileType       = 'EXE'

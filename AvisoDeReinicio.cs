@@ -48,7 +48,7 @@ namespace AvisoDeReinicio
             {
                 InitPaths();
                 ReminderConfig cfg = ReminderConfig.Load();
-                Log("TESTE_AUTO", "selftest ok; horario=" + cfg.RestartTime.ToString(@"hh\:mm"));
+                Log("Teste automático", "selftest ok");
                 Environment.Exit(0);
             }
 
@@ -89,9 +89,14 @@ namespace AvisoDeReinicio
 
         public static void Log(string evento, string detalhe)
         {
+            Log(DateTime.Now, evento, detalhe);
+        }
+
+        public static void Log(DateTime quando, string evento, string detalhe)
+        {
             try
             {
-                string linha = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + ";" + evento + ";" +
+                string linha = quando.ToString("yyyy-MM-dd HH:mm:ss") + ";" + evento + ";" +
                                ((detalhe == null) ? "" : detalhe.Replace(';', ',')) + Environment.NewLine;
                 // UTF-8 com BOM: abre certinho no Excel.
                 File.AppendAllText(LogPath, linha, new UTF8Encoding(true));
@@ -101,6 +106,32 @@ namespace AvisoDeReinicio
                 // nunca derruba o aplicativo por causa de log
             }
         }
+
+        // Problemas tecnicos (raros) vao para um arquivo separado,
+        // para o log principal ficar simples.
+        public static void LogErro(string msg)
+        {
+            try
+            {
+                File.AppendAllText(Path.Combine(AppDir, "erros.log"),
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " - " + msg + Environment.NewLine,
+                    new UTF8Encoding(true));
+            }
+            catch { }
+        }
+    }
+
+    // -------------------- eventos do log (nomes simples) ---------------------
+    public static class Eventos
+    {
+        public const string AvisoExibido = "Aviso exibido";
+        public const string AdiadoOk = "Adiado (OK)";
+        public const string ReinicioSolicitado = "Reinício solicitado";
+        public const string ComputadorReiniciado = "Computador reiniciado";
+        public const string ContagemRegressiva = "Contagem regressiva";
+        public const string ConfiguracoesAlteradas = "Configurações alteradas";
+        public const string AvisosDesativados = "Avisos desativados";
+        public const string LogLimpo = "Log limpo";
     }
 
     // ----------------------------- entrada de log ----------------------------
@@ -288,17 +319,11 @@ namespace AvisoDeReinicio
             catch { }
 
             DateTime boot = Program.LastBoot();
-            if (flagExistia)
+            if (flagExistia && (DateTime.Now - boot).TotalMinutes < 10)
             {
-                // So confirma se o boot foi de fato recente (reinicio real).
-                if ((DateTime.Now - boot).TotalMinutes < 10)
-                    Program.Log("REINICIO_CONCLUIDO", "boot=" + Program.Fmt(boot));
-                else
-                    Program.Log("FLAG_DESCARTADA", "boot_antigo=" + Program.Fmt(boot));
+                // Reinicio de verdade: registra na data/hora exata do boot.
+                Program.Log(boot, Eventos.ComputadorReiniciado, "");
             }
-            Program.Log("SESSAO_INICIADA",
-                "uptime_h=" + (DateTime.Now - boot).TotalHours.ToString("0.0", CultureInfo.InvariantCulture) +
-                "; boot=" + Program.Fmt(boot));
 
             // Bandeja
             try
@@ -323,7 +348,7 @@ namespace AvisoDeReinicio
             }
             catch (Exception ex)
             {
-                Program.Log("ERRO_BANDEJA", ex.Message);
+                Program.LogErro("bandeja: " + ex.Message);
             }
 
             RecomputeNextPopup();
@@ -343,7 +368,7 @@ namespace AvisoDeReinicio
             {
                 ShowConfig();
             }
-            if (_disabled) Program.Log("AVISOS_DESATIVADOS", "arquivo_DesativarAviso.txt_presente");
+            if (_disabled) Program.Log(Eventos.AvisosDesativados, "arquivo DesativarAviso.txt presente");
 
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = 15000;                 // checa a cada 15 s
@@ -374,7 +399,7 @@ namespace AvisoDeReinicio
 
                 if (DateTime.Now >= _nextPopup && !SatisfiedToday())
                 {
-                    int oks = LogReader.CountToday("OK_CLICADO");
+                    int oks = LogReader.CountToday(Eventos.AdiadoOk);
                     if (_cfg.ForceEnabled && oks >= _cfg.MaxOkBeforeForce)
                         ShowCountdown();
                     else
@@ -383,7 +408,7 @@ namespace AvisoDeReinicio
             }
             catch (Exception ex)
             {
-                Program.Log("ERRO_TICK", ex.Message);
+                Program.LogErro("tick: " + ex.Message);
             }
         }
 
@@ -413,8 +438,10 @@ namespace AvisoDeReinicio
             f.SnoozeRequested += OnSnooze;
             _openForm = f;
             f.FormClosed += delegate { _openForm = null; };
-            Program.Log("POPUP_EXIBIDO", "teste=" + (isTest ? "1" : "0") +
-                "; adiamentos_hoje=" + LogReader.CountToday("OK_CLICADO"));
+            string detPopup = isTest
+                ? "aviso de teste"
+                : (LogReader.CountToday(Eventos.AvisoExibido) + 1) + "º aviso do dia";
+            Program.Log(Eventos.AvisoExibido, detPopup);
             f.Show();
             f.Activate();
         }
@@ -427,7 +454,7 @@ namespace AvisoDeReinicio
             f.SnoozeRequested += OnSnooze;
             _openForm = f;
             f.FormClosed += delegate { _openForm = null; };
-            Program.Log("CONTAGEM_FORCADA", "reinicio_automatico_em_60s");
+            Program.Log(Eventos.ContagemRegressiva, "reinício automático em 60 s");
             f.Show();
             f.Activate();
         }
@@ -439,13 +466,12 @@ namespace AvisoDeReinicio
         {
             int sn = Math.Max(1, _cfg.SnoozeMinutes);
             _nextPopup = DateTime.Now.AddMinutes(sn);
-            Program.Log("OK_CLICADO", "reaparecer_em_" + sn + "min");
+            Program.Log(Eventos.AdiadoOk, "próximo aviso em " + sn + " min");
         }
 
         private void DoRestart(bool forced)
         {
-            Program.Log("REINICIO_SOLICITADO",
-                "forcado=" + (forced ? "1" : "0") + "; boot_atual=" + Program.Fmt(Program.LastBoot()));
+            Program.Log(Eventos.ReinicioSolicitado, forced ? "automático" : "pelo operador");
             try
             {
                 File.WriteAllText(Program.FlagPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
@@ -532,7 +558,7 @@ namespace AvisoDeReinicio
             corpo.SetBounds(16, 48, 450, 100);
 
             Label adiamentos = new Label();
-            adiamentos.Text = "Você já adiou " + LogReader.CountToday("OK_CLICADO") + " vez(es) hoje.";
+            adiamentos.Text = "Você já adiou " + LogReader.CountToday(Eventos.AdiadoOk) + " vez(es) hoje.";
             adiamentos.Font = new Font("Segoe UI", 9F, FontStyle.Italic);
             adiamentos.ForeColor = Color.Gray;
             adiamentos.SetBounds(16, 156, 450, 24);
@@ -871,26 +897,6 @@ namespace AvisoDeReinicio
             Shown += delegate { RefreshStats(); };
         }
 
-        private static string NomeEvento(string e)
-        {
-            switch (e)
-            {
-                case "POPUP_EXIBIDO": return "Pop-up exibido";
-                case "OK_CLICADO": return "Adiado (OK)";
-                case "REINICIO_SOLICITADO": return "Reinicio solicitado";
-                case "REINICIO_CONCLUIDO": return "Reinicio concluido";
-                case "CONTAGEM_FORCADA": return "Contagem regressiva";
-                case "SESSAO_INICIADA": return "Sessao iniciada";
-                case "CONFIG_ALTERADA": return "Configuracao alterada";
-                case "LOG_LIMPO": return "Log limpo";
-                case "TESTE_AUTO": return "Teste automatico";
-                case "FLAG_DESCARTADA": return "Flag descartada";
-                case "ERRO_BANDEJA": return "Erro bandeja";
-                case "AVISOS_DESATIVADOS": return "Avisos desativados";
-                case "ERRO_TICK": return "Erro interno";
-                default: return e;
-            }
-        }
 
         private static string UpText(DateTime boot)
         {
@@ -904,13 +910,13 @@ namespace AvisoDeReinicio
             try
             {
                 DateTime boot = Program.LastBoot();
-                int pops = LogReader.CountToday("POPUP_EXIBIDO");
-                int oks = LogReader.CountToday("OK_CLICADO");
-                int totalOks = LogReader.CountAll("OK_CLICADO");
+                int pops = LogReader.CountToday(Eventos.AvisoExibido);
+                int oks = LogReader.CountToday(Eventos.AdiadoOk);
+                int totalOks = LogReader.CountAll(Eventos.AdiadoOk);
 
                 _lblStats.Text =
-                    "Hoje: " + pops + " pop-up(s) exibido(s)  |  " + oks + " adiamento(s) (OK)  |  Total de adiamentos: " + totalOks + "\n" +
-                    "Último reinício: " + Program.Fmt(boot) + " (há " + UpText(boot) + ")  |  Tempo ligado: " + UpText(boot) + "\n" +
+                    "Hoje: " + pops + " avisos exibidos · " + oks + " adiamentos (OK) · Total de adiamentos: " + totalOks + "\n" +
+                    "Último reinício: " + Program.Fmt(boot) + " (há " + UpText(boot) + ") · Tempo ligado: " + UpText(boot) + "\n" +
                     "Dados: " + Program.AppDir + "   |   Desenvolvido por Scursel";
             }
             catch { }
@@ -923,7 +929,7 @@ namespace AvisoDeReinicio
                     _grid.Rows.Add(new object[]
                     {
                         e.When.ToString("dd/MM/yyyy HH:mm:ss"),
-                        NomeEvento(e.Evento),
+                        e.Evento,
                         e.Detalhe
                     });
                 }
@@ -943,12 +949,11 @@ namespace AvisoDeReinicio
 
             Autostart.SetEnabled(_autostartChk.Checked);
 
-            Program.Log("CONFIG_ALTERADA",
-                "horario=" + _cfg.RestartTime.ToString(@"hh\:mm") +
-                "; adiar_min=" + _cfg.SnoozeMinutes +
-                "; forcar=" + (_cfg.ForceEnabled ? "1" : "0") +
-                "; max_ok=" + _cfg.MaxOkBeforeForce +
-                "; autostart=" + (_autostartChk.Checked ? "1" : "0"));
+            Program.Log(Eventos.ConfiguracoesAlteradas,
+                "horário " + _cfg.RestartTime.ToString(@"hh\:mm") +
+                " · adiamento " + _cfg.SnoozeMinutes + " min" +
+                " · forçado: " + (_cfg.ForceEnabled ? "sim" : "não") +
+                " · início automático: " + (_autostartChk.Checked ? "sim" : "não"));
 
             if (ConfigSaved != null) ConfigSaved();
             RefreshStats();
@@ -963,7 +968,7 @@ namespace AvisoDeReinicio
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
             if (r != DialogResult.Yes) return;
             try { File.WriteAllText(Program.LogPath, ""); } catch { }
-            Program.Log("LOG_LIMPO", "limpo_pelo_usuario");
+            Program.Log(Eventos.LogLimpo, "");
             RefreshStats();
         }
     }

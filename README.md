@@ -72,7 +72,7 @@ repositório da comunidade:
 
 ```
 choco pack chocolatey\aviso-de-reinicio.nuspec
-choco push aviso-de-reinicio.1.0.1.nupkg --api-key SUA_CHAVE
+choco push aviso-de-reinicio.1.0.2.nupkg --api-key SUA_CHAVE
 ```
 
 ## Uso
@@ -94,13 +94,22 @@ choco push aviso-de-reinicio.1.0.1.nupkg --api-key SUA_CHAVE
 | PC já reiniciado no dia (até 2 h antes do horário) | Não incomoda |
 | N adiamentos no mesmo dia (se "forçar" estiver ligado) | Contagem de 60 s e reinício automático |
 
-### Log (CSV)
+### Log (simples, em português)
 
-Colunas: `DataHora ; Evento ; Detalhe`
+O log fica em `%APPDATA%\AvisoDeReinicio\log.csv` (abre direto no Excel).
+Só registra o que interessa, com nomes em português:
 
-Eventos: `SESSAO_INICIADA`, `POPUP_EXIBIDO`, `OK_CLICADO`, `REINICIO_SOLICITADO`,
-`REINICIO_CONCLUIDO` (com o horário do boot), `CONTAGEM_FORCADA`,
-`CONFIG_ALTERADA`, `AVISOS_DESATIVADOS`.
+| DataHora | Evento | Detalhe |
+|---|---|---|
+| 15/08/2026 02:00 | Aviso exibido | 1º aviso do dia |
+| 15/08/2026 02:01 | Adiado (OK) | próximo aviso em 5 min |
+| 15/08/2026 02:06 | Reinício solicitado | pelo operador |
+| 15/08/2026 02:14 | Computador reiniciado | (a data/hora já mostra o momento do reinício) |
+
+Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Reinício solicitado**,
+**Computador reiniciado**, **Contagem regressiva**, **Configurações alteradas**,
+**Avisos desativados**. Problemas técnicos (se houver) ficam num arquivo
+separado, `erros.log`.
 
 ### Máquina isenta
 
