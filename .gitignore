@@ -1,0 +1,13 @@
+﻿# binarios gerados
+*.exe
+saida/
+
+# arquivos locais/legados (nao fazem parte do projeto)
+aviso de reinicialização.bat
+LEIA-ME.txt
+install.bat
+uninstall.bat
+
+# sistema
+Thumbs.db
+desktop.ini
