@@ -21,12 +21,21 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
+
+[assembly: AssemblyTitle("Aviso de Reinício")]
+[assembly: AssemblyDescription("Lembrete diário de reinício para computadores de caixa (PDV)")]
+[assembly: AssemblyCompany("Scursel")]
+[assembly: AssemblyProduct("Aviso de Reinício")]
+[assembly: AssemblyCopyright("Desenvolvido por Scursel")]
+[assembly: AssemblyVersion("1.3.0.0")]
+[assembly: AssemblyFileVersion("1.3.0.0")]
 
 namespace AvisoDeReinicio
 {
@@ -79,6 +88,12 @@ namespace AvisoDeReinicio
 
         // Momento do ultimo boot (relogio - tempo ligado). GetTickCount64
         // inclui o tempo em suspensao/hibernacao, entao o calculo e confiavel.
+        public static Version AppVersion()
+        {
+            Version v = Assembly.GetExecutingAssembly().GetName().Version;
+            return v != null ? v : new Version(0, 0, 0, 0);
+        }
+
         public static DateTime LastBoot()
         {
             try { return DateTime.Now - TimeSpan.FromMilliseconds((double)GetTickCount64()); }
