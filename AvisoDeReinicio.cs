@@ -1114,14 +1114,21 @@ namespace AvisoDeReinicio
             // --- inicializacao ---
             GroupBox gAuto = new GroupBox();
             gAuto.Text = " Inicialização ";
-            gAuto.SetBounds(12, y, 656, 56);
+            gAuto.SetBounds(12, y, 656, 88);
             _autostartChk = new CheckBox();
             _autostartChk.Text = "Iniciar automaticamente quando o Windows ligar (recomendado)";
             _autostartChk.SetBounds(14, 22, 600, 24);
             _autostartChk.Checked = Autostart.IsEnabled();
+            Button btnSenha = new Button();
+            btnSenha.Text = Supervisor.IsEnabled(cfg)
+                ? "Trocar senha de supervisor…"
+                : "Definir senha de supervisor…";
+            btnSenha.SetBounds(14, 50, 240, 28);
+            btnSenha.Click += OnDefinirSenha;
             gAuto.Controls.Add(_autostartChk);
+            gAuto.Controls.Add(btnSenha);
             Controls.Add(gAuto);
-            y += 68;
+            y += 100;
 
             // --- estatisticas ---
             _lblStats = new Label();
@@ -1290,6 +1297,109 @@ namespace AvisoDeReinicio
             }
             Program.Log(Eventos.LogArquivado, destName);
             RefreshStats();
+        }
+
+        private void OnDefinirSenha(object sender, EventArgs e)
+        {
+            bool tem = Supervisor.IsEnabled(_cfg);
+            using (Form f = new Form())
+            {
+                f.Text = tem ? "Trocar ou remover senha" : "Definir senha de supervisor";
+                f.FormBorderStyle = FormBorderStyle.FixedDialog;
+                f.StartPosition = FormStartPosition.CenterParent;
+                f.MaximizeBox = false;
+                f.MinimizeBox = false;
+                f.ShowInTaskbar = false;
+                try { f.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+
+                int y = 12;
+                TextBox atual = null;
+                if (tem)
+                {
+                    Label la = new Label();
+                    la.Text = "Senha atual:";
+                    la.SetBounds(12, y, 330, 18);
+                    atual = new TextBox();
+                    atual.UseSystemPasswordChar = true;
+                    atual.SetBounds(12, y + 18, 330, 24);
+                    f.Controls.Add(la);
+                    f.Controls.Add(atual);
+                    y += 48;
+                }
+
+                Label ln = new Label();
+                ln.Text = tem ? "Nova senha (vazio = remover):" : "Nova senha:";
+                ln.SetBounds(12, y, 330, 18);
+                TextBox nova = new TextBox();
+                nova.UseSystemPasswordChar = true;
+                nova.SetBounds(12, y + 18, 330, 24);
+                f.Controls.Add(ln);
+                f.Controls.Add(nova);
+                y += 48;
+
+                Label lc = new Label();
+                lc.Text = "Confirmar nova senha:";
+                lc.SetBounds(12, y, 330, 18);
+                TextBox conf = new TextBox();
+                conf.UseSystemPasswordChar = true;
+                conf.SetBounds(12, y + 18, 330, 24);
+                f.Controls.Add(lc);
+                f.Controls.Add(conf);
+                y += 50;
+
+                Button ok = new Button();
+                ok.Text = "OK";
+                ok.DialogResult = DialogResult.OK;
+                ok.SetBounds(176, y, 80, 28);
+                Button cancel = new Button();
+                cancel.Text = "Cancelar";
+                cancel.DialogResult = DialogResult.Cancel;
+                cancel.SetBounds(262, y, 80, 28);
+                f.AcceptButton = ok;
+                f.CancelButton = cancel;
+                f.Controls.Add(ok);
+                f.Controls.Add(cancel);
+                f.ClientSize = new Size(360, y + 44);
+
+                if (f.ShowDialog(this) != DialogResult.OK) return;
+
+                if (tem && !Supervisor.Verify(_cfg, atual.Text))
+                {
+                    Program.Log(Eventos.SenhaIncorreta, "trocar senha");
+                    MessageBox.Show(this, "Senha atual incorreta.", "Aviso de Reinício",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (nova.Text.Length == 0)
+                {
+                    if (!tem)
+                    {
+                        MessageBox.Show(this, "Informe uma senha.", "Aviso de Reinício",
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                    Supervisor.ClearPassword(_cfg);
+                    _cfg.Save();
+                    if (ConfigSaved != null) ConfigSaved();
+                    MessageBox.Show(this, "Senha removida. A proteção ficou desligada.", "Aviso de Reinício",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+
+                if (nova.Text != conf.Text)
+                {
+                    MessageBox.Show(this, "A confirmação não confere.", "Aviso de Reinício",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                Supervisor.SetPassword(_cfg, nova.Text);
+                _cfg.Save();
+                if (ConfigSaved != null) ConfigSaved();
+                MessageBox.Show(this, "Senha de supervisor definida.", "Aviso de Reinício",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
     }
 }

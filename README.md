@@ -33,6 +33,7 @@ que usa o .NET Framework que já vem no Windows 10/11.
 - ✅ Sempre por cima das outras janelas (inclusive do PDV) + som de alerta
 - ✅ Isenção por máquina via arquivo `DesativarAviso.txt`
 - ✅ Rede de segurança: tarefa agendada relança o programa no logon se ele for fechado
+- ✅ **Senha de supervisor (opt-in, desligada por padrão)**: protege abrir configurações, Sair e Arquivar log
 
 ## Capturas de tela
 
@@ -79,7 +80,9 @@ ele já funciona, sem instalar nada.
 ### Log (simples, em português)
 
 O log fica em `%APPDATA%\AvisoDeReinicio\log.csv` (abre direto no Excel).
-Só registra o que interessa, com nomes em português:
+**Arquivar log** renomeia o arquivo para `log-AAAAMMDD.csv` e começa um
+novo, em vez de apagar o histórico. Só registra o que interessa, com nomes
+em português:
 
 | DataHora | Evento | Detalhe |
 |---|---|---|
@@ -91,8 +94,19 @@ Só registra o que interessa, com nomes em português:
 Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
 **Reinício solicitado**, **Falha ao reiniciar**, **Computador reiniciado**,
 **Contagem regressiva**, **Configurações alteradas**, **Avisos desativados**,
-**Avisos reativados**. Problemas técnicos (se houver) ficam num arquivo
-separado, `erros.log`.
+**Avisos reativados**, **Log arquivado**, **Senha incorreta**. Problemas
+técnicos (se houver) ficam num arquivo separado, `erros.log`.
+
+### Senha de supervisor (opt-in)
+
+Desligada por padrão: quem não configurar não vê diferença nenhuma. Na tela
+de configurações, **Definir senha de supervisor…** passa a pedir senha para
+abrir as configurações, para **Sair** e para **Arquivar log**.
+
+**Limite honesto:** sem administrador nenhuma proteção é real. O operador
+pode editar `%APPDATA%\AvisoDeReinicio\config.ini` no Bloco de Notas (apagar
+`SenhaHash`), matar o processo no Gerenciador de Tarefas, ou remover a chave
+`Run`. A senha é barreira de conveniência, não controle de segurança.
 
 ### Máquina isenta
 
