@@ -21,6 +21,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -34,8 +35,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Scursel")]
 [assembly: AssemblyProduct("Aviso de Reinício")]
 [assembly: AssemblyCopyright("Desenvolvido por Scursel")]
-[assembly: AssemblyVersion("1.3.0.0")]
-[assembly: AssemblyFileVersion("1.3.0.0")]
+[assembly: AssemblyVersion("1.4.0.0")]
+[assembly: AssemblyFileVersion("1.4.0.0")]
 
 namespace AvisoDeReinicio
 {
@@ -50,6 +51,7 @@ namespace AvisoDeReinicio
         public static string LogPath;     // log.csv
         public static string FlagPath;    // reinicio_pendente.flag
         public static string LastBootPath; // ultimo_boot.txt
+        public static string LastCheckPath; // ultima_checagem.txt
 
         [STAThread]
         private static void Main(string[] args)
@@ -84,6 +86,7 @@ namespace AvisoDeReinicio
             LogPath = Path.Combine(AppDir, "log.csv");
             FlagPath = Path.Combine(AppDir, "reinicio_pendente.flag");
             LastBootPath = Path.Combine(AppDir, "ultimo_boot.txt");
+            LastCheckPath = Path.Combine(AppDir, "ultima_checagem.txt");
         }
 
         // Momento do ultimo boot (relogio - tempo ligado). GetTickCount64
@@ -188,6 +191,8 @@ namespace AvisoDeReinicio
         public const string LogLimpo = "Log limpo";
         public const string LogArquivado = "Log arquivado";
         public const string SenhaIncorreta = "Senha incorreta";
+        public const string AtualizacaoDisponivel = "Atualização disponível";
+        public const string AtualizacaoAplicada = "Atualização aplicada";
     }
 
     // ----------------------------- entrada de log ----------------------------
@@ -307,6 +312,7 @@ namespace AvisoDeReinicio
         public string SenhaSalt = "";
         public bool ProtegerSair = true;
         public bool ProtegerLimparLog = true;
+        public bool AutoUpdate = false;                        // padrao: avisar, nao instalar
 
         public static ReminderConfig Load()
         {
@@ -357,6 +363,9 @@ namespace AvisoDeReinicio
                             case "protegerlimparlog":
                                 c.ProtegerLimparLog = (val == "1" || val.ToLowerInvariant() == "true");
                                 break;
+                            case "autoupdate":
+                                c.AutoUpdate = (val == "1" || val.ToLowerInvariant() == "true");
+                                break;
                         }
                     }
                 }
@@ -381,6 +390,7 @@ namespace AvisoDeReinicio
                 sb.AppendLine("SenhaSalt=" + (SenhaSalt == null ? "" : SenhaSalt));
                 sb.AppendLine("ProtegerSair=" + (ProtegerSair ? "1" : "0"));
                 sb.AppendLine("ProtegerLimparLog=" + (ProtegerLimparLog ? "1" : "0"));
+                sb.AppendLine("AutoUpdate=" + (AutoUpdate ? "1" : "0"));
                 File.WriteAllText(Program.ConfigPath, sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
@@ -528,7 +538,209 @@ namespace AvisoDeReinicio
             }
             catch { }
         }
-    }    // ------------------------- app da bandeja (nucleo) -----------------------
+    }
+
+    // Atualizacao pelo GitHub: 302 em /releases/latest, sem api.github.com.
+    public class UpdateInfo
+    {
+        public string Tag;
+        public Version Version;
+        public string InstallerPath;
+    }
+
+    public static class Updater
+    {
+        public const string LatestUrl = "https://github.com/scursel/aviso-de-reinicio/releases/latest";
+        public const string DownloadRoot = "https://github.com/scursel/aviso-de-reinicio/releases/download/";
+        private static bool _tlsReady;
+
+        public static void EnsureTls()
+        {
+            if (_tlsReady) return;
+            try { ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; } catch { }
+            _tlsReady = true;
+        }
+
+        public static string UserAgent()
+        {
+            return "AvisoDeReinicio/" + Program.AppVersion().ToString();
+        }
+
+        public static Version Normalize(Version v)
+        {
+            if (v == null) return new Version(0, 0, 0);
+            int b = v.Build < 0 ? 0 : v.Build;
+            return new Version(v.Major, v.Minor, b);
+        }
+
+        // So devolve info se a tag remota for MAIOR que a versao local.
+        public static UpdateInfo CheckLatest()
+        {
+            try
+            {
+                string loc = GetRedirectLocation(LatestUrl);
+                if (string.IsNullOrEmpty(loc)) return null;
+                int ix = loc.LastIndexOf("/tag/", StringComparison.OrdinalIgnoreCase);
+                if (ix < 0) return null;
+                string tag = loc.Substring(ix + 5).Trim();
+                int q = tag.IndexOfAny(new char[] { '?', '#' });
+                if (q >= 0) tag = tag.Substring(0, q);
+                tag = tag.Trim('/');
+                if (tag.Length == 0) return null;
+
+                string num = tag.Trim();
+                if (num.Length > 0 && (num[0] == 'v' || num[0] == 'V'))
+                    num = num.Substring(1);
+                Version remote;
+                if (!Version.TryParse(num, out remote)) return null;
+                if (Normalize(remote).CompareTo(Normalize(Program.AppVersion())) <= 0)
+                    return null;
+
+                UpdateInfo info = new UpdateInfo();
+                info.Tag = tag.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? tag : ("v" + tag);
+                info.Version = remote;
+                return info;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static bool DownloadAndVerify(UpdateInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.Tag)) return false;
+            try
+            {
+                string fileName = "Instalador-AvisoDeReinicio-" + info.Tag + ".exe";
+                string dest = Path.Combine(Path.GetTempPath(), fileName);
+                string sumsUrl = DownloadRoot + info.Tag + "/SHA256SUMS.txt";
+                string exeUrl = DownloadRoot + info.Tag + "/" + fileName;
+
+                string sums = DownloadText(sumsUrl, 10000);
+                if (string.IsNullOrEmpty(sums)) return false;
+                string expected = FindHash(sums, fileName);
+                if (string.IsNullOrEmpty(expected)) return false;
+
+                if (!DownloadFile(exeUrl, dest, 60000)) return false;
+                string actual = FileSha256(dest);
+                if (actual == null || string.Compare(actual, expected, StringComparison.OrdinalIgnoreCase) != 0)
+                {
+                    try { File.Delete(dest); } catch { }
+                    return false;
+                }
+                info.InstallerPath = dest;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static bool LaunchInstaller(UpdateInfo info)
+        {
+            if (info == null || string.IsNullOrEmpty(info.InstallerPath) || !File.Exists(info.InstallerPath))
+                return false;
+            string tasks = Autostart.IsEnabled() ? "autostart" : "";
+            string args = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /TASKS=\"" + tasks + "\"";
+            Process.Start(info.InstallerPath, args);
+            return true;
+        }
+
+        private static string GetRedirectLocation(string url)
+        {
+            EnsureTls();
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+            req.Method = "GET";
+            req.AllowAutoRedirect = false;
+            req.UserAgent = UserAgent();
+            req.Timeout = 10000;
+            req.ReadWriteTimeout = 10000;
+            try
+            {
+                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                    return resp.Headers[HttpResponseHeader.Location];
+            }
+            catch (WebException ex)
+            {
+                HttpWebResponse resp = ex.Response as HttpWebResponse;
+                if (resp == null) return null;
+                using (resp)
+                    return resp.Headers[HttpResponseHeader.Location];
+            }
+        }
+
+        private static string DownloadText(string url, int timeoutMs)
+        {
+            EnsureTls();
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+            req.AllowAutoRedirect = true;
+            req.MaximumAutomaticRedirections = 8;
+            req.UserAgent = UserAgent();
+            req.Timeout = timeoutMs;
+            req.ReadWriteTimeout = timeoutMs;
+            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+            using (Stream s = resp.GetResponseStream())
+            using (StreamReader r = new StreamReader(s, Encoding.UTF8))
+                return r.ReadToEnd();
+        }
+
+        private static bool DownloadFile(string url, string dest, int timeoutMs)
+        {
+            EnsureTls();
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+            req.AllowAutoRedirect = true;
+            req.MaximumAutomaticRedirections = 8;
+            req.UserAgent = UserAgent();
+            req.Timeout = timeoutMs;
+            req.ReadWriteTimeout = timeoutMs;
+            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+            using (Stream src = resp.GetResponseStream())
+            using (FileStream dst = File.Create(dest))
+            {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = src.Read(buf, 0, buf.Length)) > 0)
+                    dst.Write(buf, 0, n);
+            }
+            return File.Exists(dest) && new FileInfo(dest).Length > 0;
+        }
+
+        private static string FindHash(string sums, string fileName)
+        {
+            string[] lines = sums.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i].Trim();
+                if (line.Length == 0 || line.StartsWith("#")) continue;
+                int sp = line.IndexOf(' ');
+                if (sp <= 0) continue;
+                string hash = line.Substring(0, sp).Trim();
+                string name = line.Substring(sp).Trim();
+                if (name.Length >= 2 && name[0] == '*') name = name.Substring(1);
+                name = name.Replace('/', '\\');
+                if (name.EndsWith(fileName, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(Path.GetFileName(name), fileName, StringComparison.OrdinalIgnoreCase))
+                    return hash;
+            }
+            return null;
+        }
+
+        private static string FileSha256(string path)
+        {
+            using (SHA256Managed sha = new SHA256Managed())
+            using (FileStream fs = File.OpenRead(path))
+            {
+                byte[] hash = sha.ComputeHash(fs);
+                StringBuilder sb = new StringBuilder(hash.Length * 2);
+                for (int i = 0; i < hash.Length; i++)
+                    sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
+            }
+        }
+    }
+    // ------------------------- app da bandeja (nucleo) -----------------------
     public class TrayApp : ApplicationContext
     {
         private NotifyIcon _tray;
@@ -540,6 +752,11 @@ namespace AvisoDeReinicio
         private ConfigForm _configForm;      // uma unica tela de configuracoes
         private bool _forceDemo;
         private bool _disabled;
+        private MenuItem _menuUpdate;
+        private UpdateInfo _pendingUpdate;
+        private volatile bool _updateBusy;
+        private volatile bool _checkDone;
+        private DateTime _lastCheckDay = DateTime.MinValue;
 
         public TrayApp()
         {
@@ -599,6 +816,8 @@ namespace AvisoDeReinicio
                 menu.MenuItems.Add("Abrir configurações...", OnOpenConfig);
                 menu.MenuItems.Add("Testar pop-up agora", OnTestPopup);
                 menu.MenuItems.Add("Abrir pasta de dados (log)", OnOpenFolder);
+                _menuUpdate = menu.MenuItems.Add("Atualizar…", OnUpdateNow);
+                _menuUpdate.Visible = false;
                 menu.MenuItems.Add("-");
                 menu.MenuItems.Add("Sair", OnExit);
                 _tray.ContextMenu = menu;
@@ -624,6 +843,8 @@ namespace AvisoDeReinicio
                 ShowConfig();
             }
 
+            LoadLastCheckDay();
+
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = 15000;                 // checa a cada 15 s
             _timer.Tick += OnTimerTick;
@@ -635,6 +856,8 @@ namespace AvisoDeReinicio
         {
             try
             {
+                MaybeCheckUpdate();
+
                 // DesativarAviso.txt e reavaliado a cada tick (criar/apagar vale sem reiniciar).
                 bool nowDisabled = File.Exists(Path.Combine(Program.AppDir, "DesativarAviso.txt"));
                 if (nowDisabled != _disabled)
@@ -820,6 +1043,106 @@ namespace AvisoDeReinicio
         }
 
         // ------------------------------ menus ---------------------------------
+        private void LoadLastCheckDay()
+        {
+            try
+            {
+                if (!File.Exists(Program.LastCheckPath)) return;
+                DateTime d;
+                if (DateTime.TryParseExact(File.ReadAllText(Program.LastCheckPath).Trim(),
+                    "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d))
+                    _lastCheckDay = d;
+            }
+            catch { }
+        }
+
+        private void SaveLastCheckDay()
+        {
+            try
+            {
+                File.WriteAllText(Program.LastCheckPath, DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            }
+            catch { }
+        }
+
+        private void MaybeCheckUpdate()
+        {
+            if (_checkDone)
+            {
+                _checkDone = false;
+                _updateBusy = false;
+                _lastCheckDay = DateTime.Today;
+                SaveLastCheckDay();
+                HandleUpdateResult(_pendingUpdate);
+                return;
+            }
+            if (_updateBusy) return;
+            if (_lastCheckDay.Date == DateTime.Today) return;
+            _updateBusy = true;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                UpdateInfo info = null;
+                try { info = Updater.CheckLatest(); }
+                catch { }
+                _pendingUpdate = info;
+                _checkDone = true;
+            });
+        }
+
+        private void HandleUpdateResult(UpdateInfo info)
+        {
+            if (info == null) return;
+            try
+            {
+                if (_menuUpdate != null)
+                {
+                    _menuUpdate.Text = "Atualizar para a " + info.Tag;
+                    _menuUpdate.Visible = true;
+                }
+                Program.Log(Eventos.AtualizacaoDisponivel, info.Tag);
+                if (_tray != null)
+                    _tray.ShowBalloonTip(10000, "Aviso de Reinício",
+                        "Nova versão " + info.Tag + " disponível.", ToolTipIcon.Info);
+            }
+            catch { }
+
+            // Auto-instala so com AutoUpdate=1 e logo apos o reinicio diario.
+            if (_cfg.AutoUpdate && SatisfiedToday() &&
+                (DateTime.Now - Program.LastBoot()).TotalMinutes < 30)
+                ApplyUpdate(info);
+        }
+
+        private void OnUpdateNow(object sender, EventArgs e)
+        {
+            if (_pendingUpdate != null) ApplyUpdate(_pendingUpdate);
+        }
+
+        private void ApplyUpdate(UpdateInfo info)
+        {
+            if (info == null) return;
+            if (_updateBusy) return;
+            _updateBusy = true;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool ok = false;
+                try { ok = Updater.DownloadAndVerify(info) && Updater.LaunchInstaller(info); }
+                catch { }
+                if (!ok)
+                {
+                    _updateBusy = false;
+                    return;
+                }
+                try { Program.Log(Eventos.AtualizacaoAplicada, info.Tag); } catch { }
+                try
+                {
+                    if (_timer != null) _timer.Stop();
+                    if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
+                }
+                catch { }
+                Environment.Exit(0);
+            });
+        }
+
         private void OnOpenConfig(object sender, EventArgs e) { ShowConfig(); }
 
         private void OnTestPopup(object sender, EventArgs e) { ShowPopup(true); }
@@ -1136,6 +1459,7 @@ namespace AvisoDeReinicio
         private CheckBox _forceChk;
         private NumericUpDown _maxOk;
         private CheckBox _autostartChk;
+        private CheckBox _autoUpdateChk;
         private DataGridView _grid;
         private Label _lblStats;
 
@@ -1213,21 +1537,26 @@ namespace AvisoDeReinicio
             // --- inicializacao ---
             GroupBox gAuto = new GroupBox();
             gAuto.Text = " Inicialização ";
-            gAuto.SetBounds(12, y, 656, 88);
+            gAuto.SetBounds(12, y, 656, 116);
             _autostartChk = new CheckBox();
             _autostartChk.Text = "Iniciar automaticamente quando o Windows ligar (recomendado)";
             _autostartChk.SetBounds(14, 22, 600, 24);
             _autostartChk.Checked = Autostart.IsEnabled();
+            _autoUpdateChk = new CheckBox();
+            _autoUpdateChk.Text = "Instalar atualizações sozinho após o reinício diário (desligado = só avisar)";
+            _autoUpdateChk.SetBounds(14, 48, 620, 24);
+            _autoUpdateChk.Checked = cfg.AutoUpdate;
             Button btnSenha = new Button();
             btnSenha.Text = Supervisor.IsEnabled(cfg)
                 ? "Trocar senha de supervisor…"
                 : "Definir senha de supervisor…";
-            btnSenha.SetBounds(14, 50, 240, 28);
+            btnSenha.SetBounds(14, 76, 240, 28);
             btnSenha.Click += OnDefinirSenha;
             gAuto.Controls.Add(_autostartChk);
+            gAuto.Controls.Add(_autoUpdateChk);
             gAuto.Controls.Add(btnSenha);
             Controls.Add(gAuto);
-            y += 100;
+            y += 128;
 
             // --- estatisticas ---
             _lblStats = new Label();
@@ -1361,6 +1690,7 @@ namespace AvisoDeReinicio
             _cfg.SnoozeMinutes = (int)_snooze.Value;
             _cfg.ForceEnabled = _forceChk.Checked;
             _cfg.MaxOkBeforeForce = (int)_maxOk.Value;
+            _cfg.AutoUpdate = _autoUpdateChk.Checked;
             _cfg.Save();
 
             Autostart.SetEnabled(_autostartChk.Checked);
@@ -1369,7 +1699,8 @@ namespace AvisoDeReinicio
                 "horário " + _cfg.RestartTime.ToString(@"hh\:mm") +
                 " · adiamento " + _cfg.SnoozeMinutes + " min" +
                 " · forçado: " + (_cfg.ForceEnabled ? "sim" : "não") +
-                " · início automático: " + (_autostartChk.Checked ? "sim" : "não"));
+                " · início automático: " + (_autostartChk.Checked ? "sim" : "não") +
+                " · auto-update: " + (_cfg.AutoUpdate ? "sim" : "não"));
 
             if (ConfigSaved != null) ConfigSaved();
             RefreshStats();
