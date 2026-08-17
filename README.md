@@ -81,8 +81,8 @@ ele já funciona, sem instalar nada.
 
 O log fica em `%APPDATA%\AvisoDeReinicio\log.csv` (abre direto no Excel).
 **Arquivar log** renomeia o arquivo para `log-AAAAMMDD.csv` e começa um
-novo, em vez de apagar o histórico. Só registra o que interessa, com nomes
-em português:
+novo, em vez de apagar o histórico. Acima de ~2 MB o programa arquiva
+sozinho. Só registra o que interessa, com nomes em português:
 
 | DataHora | Evento | Detalhe |
 |---|---|---|

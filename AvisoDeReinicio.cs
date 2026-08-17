@@ -123,6 +123,39 @@ namespace AvisoDeReinicio
             {
                 // nunca derruba o aplicativo por causa de log
             }
+            MaybeRotateLog();
+        }
+
+        public const long LogRotateBytes = 2L * 1024 * 1024;
+
+        public static string ArchiveCurrentLog()
+        {
+            string destName = "log-" + DateTime.Now.ToString("yyyyMMdd") + ".csv";
+            string dest = Path.Combine(AppDir, destName);
+            if (File.Exists(dest))
+            {
+                destName = "log-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".csv";
+                dest = Path.Combine(AppDir, destName);
+            }
+            if (File.Exists(LogPath))
+                File.Move(LogPath, dest);
+            return destName;
+        }
+
+        public static void MaybeRotateLog()
+        {
+            try
+            {
+                if (!File.Exists(LogPath)) return;
+                FileInfo fi = new FileInfo(LogPath);
+                if (fi.Length < LogRotateBytes) return;
+                string dest = ArchiveCurrentLog();
+                Log(Eventos.LogArquivado, "rotação automática (>2 MB) → " + dest);
+            }
+            catch (Exception ex)
+            {
+                LogErro("rotacao log: " + ex.Message);
+            }
         }
 
         // Problemas tecnicos (raros) vao para um arquivo separado,
@@ -178,11 +211,9 @@ namespace AvisoDeReinicio
             try
             {
                 if (!File.Exists(Program.LogPath)) return list;
-                string[] lines = File.ReadAllLines(Program.LogPath);
-                int start = Math.Max(0, lines.Length - maxLines);
-                for (int i = start; i < lines.Length; i++)
+                foreach (string raw in ReadLastLines(Program.LogPath, maxLines))
                 {
-                    string l = (lines[i] == null ? "" : lines[i]).Trim();
+                    string l = (raw == null ? "" : raw).Trim().TrimStart('\uFEFF');
                     if (l.Length == 0) continue;
                     string[] p = l.Split(';');
                     DateTime dt;
@@ -196,6 +227,51 @@ namespace AvisoDeReinicio
             }
             catch { }
             return list;
+        }
+
+        // Le as ultimas N linhas sem carregar o arquivo inteiro.
+        private static List<string> ReadLastLines(string path, int maxLines)
+        {
+            List<string> acc = new List<string>();
+            using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                if (fs.Length == 0) return acc;
+                long pos = fs.Length;
+                byte[] buf = new byte[4096];
+                List<byte> chunk = new List<byte>();
+                while (pos > 0 && acc.Count < maxLines)
+                {
+                    int toRead = (int)Math.Min(buf.Length, pos);
+                    pos -= toRead;
+                    fs.Seek(pos, SeekOrigin.Begin);
+                    int n = fs.Read(buf, 0, toRead);
+                    for (int i = n - 1; i >= 0; i--)
+                    {
+                        if (buf[i] == (byte)'\n')
+                        {
+                            if (chunk.Count > 0)
+                            {
+                                acc.Add(BytesToLine(chunk));
+                                chunk.Clear();
+                                if (acc.Count >= maxLines) break;
+                            }
+                        }
+                        else chunk.Add(buf[i]);
+                    }
+                }
+                if (chunk.Count > 0 && acc.Count < maxLines)
+                    acc.Add(BytesToLine(chunk));
+            }
+            acc.Reverse();
+            return acc;
+        }
+
+        private static string BytesToLine(List<byte> rev)
+        {
+            byte[] raw = new byte[rev.Count];
+            for (int i = 0; i < rev.Count; i++)
+                raw[i] = rev[rev.Count - 1 - i];
+            return Encoding.UTF8.GetString(raw).TrimEnd('\r');
         }
 
         public static int CountAll(string evento)
@@ -468,6 +544,7 @@ namespace AvisoDeReinicio
         public TrayApp()
         {
             _cfg = ReminderConfig.Load();
+            Program.MaybeRotateLog();
 
             // Detecta reinicio comparando o boot atual com o ultimo conhecido.
             // A flag so diferencia "pelo app" de "por fora" (menu Iniciar, Update).
@@ -1235,12 +1312,21 @@ namespace AvisoDeReinicio
 
         private void RefreshStats()
         {
+            List<LogEntry> entries = LogReader.Read(5000);
             try
             {
                 DateTime boot = Program.LastBoot();
-                int pops = LogReader.CountToday(Eventos.AvisoExibido);
-                int oks = LogReader.CountToday(Eventos.AdiadoOk);
-                int totalOks = LogReader.CountAll(Eventos.AdiadoOk);
+                int pops = 0, oks = 0, totalOks = 0;
+                string today = DateTime.Now.ToString("yyyy-MM-dd");
+                foreach (LogEntry e in entries)
+                {
+                    if (e.Evento == Eventos.AvisoExibido && e.When.ToString("yyyy-MM-dd") == today) pops++;
+                    if (e.Evento == Eventos.AdiadoOk)
+                    {
+                        totalOks++;
+                        if (e.When.ToString("yyyy-MM-dd") == today) oks++;
+                    }
+                }
 
                 _lblStats.Text =
                     "Hoje: " + pops + " avisos exibidos · " + oks + " adiamentos (OK) · Total de adiamentos: " + totalOks + "\n" +
@@ -1252,8 +1338,10 @@ namespace AvisoDeReinicio
             try
             {
                 _grid.Rows.Clear();
-                foreach (LogEntry e in LogReader.Read(500))
+                int start = Math.Max(0, entries.Count - 500);
+                for (int i = start; i < entries.Count; i++)
                 {
+                    LogEntry e = entries[i];
                     _grid.Rows.Add(new object[]
                     {
                         e.When.ToString("dd/MM/yyyy HH:mm:ss"),
@@ -1298,17 +1386,10 @@ namespace AvisoDeReinicio
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (r != DialogResult.Yes) return;
 
-            string destName = "log-" + DateTime.Now.ToString("yyyyMMdd") + ".csv";
-            string dest = Path.Combine(Program.AppDir, destName);
-            if (File.Exists(dest))
-            {
-                destName = "log-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".csv";
-                dest = Path.Combine(Program.AppDir, destName);
-            }
+            string destName;
             try
             {
-                if (File.Exists(Program.LogPath))
-                    File.Move(Program.LogPath, dest);
+                destName = Program.ArchiveCurrentLog();
             }
             catch (Exception ex)
             {
