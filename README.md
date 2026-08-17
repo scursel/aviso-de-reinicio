@@ -34,6 +34,7 @@ que usa o .NET Framework que já vem no Windows 10/11.
 - ✅ Isenção por máquina via arquivo `DesativarAviso.txt`
 - ✅ Rede de segurança: tarefa agendada relança o programa no logon e a cada 10 min se ele for fechado
 - ✅ **Senha de supervisor (opt-in, desligada por padrão)**: protege abrir configurações, Sair e Arquivar log
+- ✅ **Atualização pelo GitHub (padrão: só avisar)**: checa 1×/dia a última release; menu e balão na bandeja. `AutoUpdate=1` instala sozinho só logo após o reinício diário
 
 ## Capturas de tela
 
@@ -94,8 +95,9 @@ sozinho. Só registra o que interessa, com nomes em português:
 Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
 **Reinício solicitado**, **Falha ao reiniciar**, **Computador reiniciado**,
 **Contagem regressiva**, **Configurações alteradas**, **Avisos desativados**,
-**Avisos reativados**, **Log arquivado**, **Senha incorreta**. Problemas
-técnicos (se houver) ficam num arquivo separado, `erros.log`.
+**Avisos reativados**, **Log arquivado**, **Senha incorreta**,
+**Atualização disponível**, **Atualização aplicada**. Problemas técnicos
+(se houver) ficam num arquivo separado, `erros.log`.
 
 ### Senha de supervisor (opt-in)
 
@@ -140,8 +142,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\release.ps1
 ```
 
 A versão do programa vive só em `[assembly: AssemblyVersion]` no
-`AvisoDeReinicio.cs` (hoje **1.3.0**). `release.ps1` copia esse número para
+`AvisoDeReinicio.cs` (hoje **1.4.0**). `release.ps1` copia esse número para
 o instalador. Use `-SkipTag` ou `-SkipInno` para testar sem tag/Inno.
+
+### Atualização automática
+
+Uma vez por dia o programa consulta
+`https://github.com/scursel/aviso-de-reinicio/releases/latest` (redirect 302,
+sem a API do GitHub). Só oferece update se a tag for **maior** que a versão
+instalada — um rollback no GitHub não rebaixa o parque. O instalador é
+conferido contra o `SHA256SUMS.txt` do mesmo release.
+
+Padrão: **avisar** (balão + item de menu). Para instalar sozinho, marque a
+opção na tela de configurações ou grave `AutoUpdate=1` no `config.ini`.
+Mesmo assim a instalação só roda nos 30 minutos depois do reinício diário,
+nunca no meio do expediente.
+
+Máquinas na v1.0.2 **não** se auto-atualizam — precisam de um empurrão
+manual até pelo menos a v1.3.0 (quando a versão passou a existir no exe).
+
+Em desligamento híbrido (Fast Startup) o uptime não zera, então
+"desligar e ligar" não conta como reinício. Para o propósito do aviso isso
+está certo.
 
 A distribuição **não é assinada** hoje: o SmartScreen do Windows trata o
 instalador como desconhecido e pode avisar na primeira execução. Para
@@ -150,7 +172,8 @@ script chama o `signtool` só quando o certificado está preenchido.
 
 O `SHA256SUMS.txt` do release prova que o arquivo baixado é o que o release
 declara. **Não** prova que o release é legítimo. Sem assinatura Authenticode,
-a segurança do parque = segurança da conta GitHub.
+a segurança do parque = segurança da conta GitHub (o updater baixa e executa
+o instalador publicado nessa conta).
 
 Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho),
 `--config` (abre direto a tela de configurações) e `--selftest` (grava um log
