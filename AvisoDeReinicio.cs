@@ -22,6 +22,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -209,6 +210,10 @@ namespace AvisoDeReinicio
         public int MaxOkBeforeForce = 10;                      // apos X "OK" no mesmo dia
         public int PopupTimeoutMinutes = 15;                   // sem clique, adia sozinho
         public int SatisfiedHours = 20;                        // boot recente = ja satisfeito
+        public string SenhaHash = "";                          // vazio = senha desligada
+        public string SenhaSalt = "";
+        public bool ProtegerSair = true;
+        public bool ProtegerLimparLog = true;
 
         public static ReminderConfig Load()
         {
@@ -247,6 +252,18 @@ namespace AvisoDeReinicio
                             case "satisfiedhours":
                                 if (int.TryParse(val, out n)) c.SatisfiedHours = Math.Max(1, Math.Min(48, n));
                                 break;
+                            case "senhahash":
+                                c.SenhaHash = val;
+                                break;
+                            case "senhasalt":
+                                c.SenhaSalt = val;
+                                break;
+                            case "protegersair":
+                                c.ProtegerSair = (val == "1" || val.ToLowerInvariant() == "true");
+                                break;
+                            case "protegerlimparlog":
+                                c.ProtegerLimparLog = (val == "1" || val.ToLowerInvariant() == "true");
+                                break;
                         }
                     }
                 }
@@ -267,9 +284,74 @@ namespace AvisoDeReinicio
                 sb.AppendLine("MaxOkBeforeForce=" + MaxOkBeforeForce);
                 sb.AppendLine("PopupTimeoutMinutes=" + PopupTimeoutMinutes);
                 sb.AppendLine("SatisfiedHours=" + SatisfiedHours);
+                sb.AppendLine("SenhaHash=" + (SenhaHash == null ? "" : SenhaHash));
+                sb.AppendLine("SenhaSalt=" + (SenhaSalt == null ? "" : SenhaSalt));
+                sb.AppendLine("ProtegerSair=" + (ProtegerSair ? "1" : "0"));
+                sb.AppendLine("ProtegerLimparLog=" + (ProtegerLimparLog ? "1" : "0"));
                 File.WriteAllText(Program.ConfigPath, sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
+        }
+    }
+
+    // Senha de supervisor (opt-in). SenhaHash vazio = recurso desligado.
+    // PBKDF2-HMAC-SHA1 via Rfc2898DeriveBytes (mscorlib, sem referencia nova).
+    public static class Supervisor
+    {
+        public const int Iterations = 100000;
+        public const int SaltSize = 16;
+        public const int HashSize = 32;
+
+        public static bool IsEnabled(ReminderConfig cfg)
+        {
+            return cfg != null && cfg.SenhaHash != null && cfg.SenhaHash.Length > 0;
+        }
+
+        public static void SetPassword(ReminderConfig cfg, string password)
+        {
+            byte[] salt = new byte[SaltSize];
+            using (RNGCryptoServiceProvider rng = new RNGCryptoServiceProvider())
+                rng.GetBytes(salt);
+            cfg.SenhaSalt = Convert.ToBase64String(salt);
+            cfg.SenhaHash = Hash(password, salt);
+        }
+
+        public static void ClearPassword(ReminderConfig cfg)
+        {
+            cfg.SenhaHash = "";
+            cfg.SenhaSalt = "";
+        }
+
+        public static bool Verify(ReminderConfig cfg, string password)
+        {
+            if (!IsEnabled(cfg)) return true;
+            byte[] salt;
+            try { salt = Convert.FromBase64String(cfg.SenhaSalt == null ? "" : cfg.SenhaSalt); }
+            catch { return false; }
+            return FixedTimeEquals(Hash(password, salt), cfg.SenhaHash);
+        }
+
+        private static string Hash(string password, byte[] salt)
+        {
+            using (Rfc2898DeriveBytes kdf = new Rfc2898DeriveBytes(password == null ? "" : password, salt, Iterations))
+                return Convert.ToBase64String(kdf.GetBytes(HashSize));
+        }
+
+        private static bool FixedTimeEquals(string a, string b)
+        {
+            if (a == null) a = "";
+            if (b == null) b = "";
+            byte[] ba = Encoding.UTF8.GetBytes(a);
+            byte[] bb = Encoding.UTF8.GetBytes(b);
+            int max = Math.Max(ba.Length, bb.Length);
+            int diff = ba.Length ^ bb.Length;
+            for (int i = 0; i < max; i++)
+            {
+                byte xa = i < ba.Length ? ba[i] : (byte)0;
+                byte xb = i < bb.Length ? bb[i] : (byte)0;
+                diff |= xa ^ xb;
+            }
+            return diff == 0;
         }
     }
 
