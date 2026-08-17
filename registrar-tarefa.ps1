@@ -6,6 +6,9 @@ if (-not (Test-Path $exe)) { exit 0 }
 try {
     $action  = New-ScheduledTaskAction -Execute $exe
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    # -AtLogOn nao aceita -RepetitionInterval; copia o bloco de um trigger -Once.
+    $rep = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 10) -RepetitionDuration (New-TimeSpan -Days 9999)).Repetition
+    $trigger.Repetition = $rep
     Register-ScheduledTask -TaskName 'AvisoDeReinicioFallback' -Action $action -Trigger $trigger -Force -ErrorAction Stop | Out-Null
     Write-Output 'tarefa AvisoDeReinicioFallback criada'
 } catch {

@@ -32,7 +32,7 @@ que usa o .NET Framework que já vem no Windows 10/11.
 - ✅ Se o PC bootou nas últimas 20 h (configurável), não incomoda de novo
 - ✅ Sempre por cima das outras janelas (inclusive do PDV) + som de alerta
 - ✅ Isenção por máquina via arquivo `DesativarAviso.txt`
-- ✅ Rede de segurança: tarefa agendada relança o programa no logon se ele for fechado
+- ✅ Rede de segurança: tarefa agendada relança o programa no logon e a cada 10 min se ele for fechado
 - ✅ **Senha de supervisor (opt-in, desligada por padrão)**: protege abrir configurações, Sair e Arquivar log
 
 ## Capturas de tela
