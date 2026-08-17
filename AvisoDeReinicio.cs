@@ -135,6 +135,7 @@ namespace AvisoDeReinicio
         public const string ContagemRegressiva = "Contagem regressiva";
         public const string ConfiguracoesAlteradas = "Configurações alteradas";
         public const string AvisosDesativados = "Avisos desativados";
+        public const string AvisosReativados = "Avisos reativados";
         public const string LogLimpo = "Log limpo";
     }
 
@@ -387,16 +388,12 @@ namespace AvisoDeReinicio
                 _forceDemo = true;
             }
 
-            // Maquina isenta? Arquivo "DesativarAviso.txt" na pasta de dados
-            // desliga os pop-ups sem desinstalar o programa.
-            _disabled = File.Exists(Path.Combine(Program.AppDir, "DesativarAviso.txt"));
             // Flag de desenvolvimento: abre direto a tela de configuracoes
             if (Environment.GetCommandLineArgs().Length > 1 &&
                 string.Equals(Environment.GetCommandLineArgs()[1], "--config", StringComparison.OrdinalIgnoreCase))
             {
                 ShowConfig();
             }
-            if (_disabled) Program.Log(Eventos.AvisosDesativados, "arquivo DesativarAviso.txt presente");
 
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = 15000;                 // checa a cada 15 s
@@ -409,6 +406,17 @@ namespace AvisoDeReinicio
         {
             try
             {
+                // DesativarAviso.txt e reavaliado a cada tick (criar/apagar vale sem reiniciar).
+                bool nowDisabled = File.Exists(Path.Combine(Program.AppDir, "DesativarAviso.txt"));
+                if (nowDisabled != _disabled)
+                {
+                    _disabled = nowDisabled;
+                    if (_disabled)
+                        Program.Log(Eventos.AvisosDesativados, "arquivo DesativarAviso.txt presente");
+                    else
+                        Program.Log(Eventos.AvisosReativados, "arquivo DesativarAviso.txt removido");
+                }
+
                 if (_openForm != null) return;       // ja tem aviso na tela
                 if (_disabled) return;               // maquina isenta
                 // flag de teste/desenvolvimento: dispara o pop-up na 1a checagem

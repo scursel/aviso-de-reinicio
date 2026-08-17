@@ -99,14 +99,16 @@ Só registra o que interessa, com nomes em português:
 
 Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
 **Reinício solicitado**, **Falha ao reiniciar**, **Computador reiniciado**,
-**Contagem regressiva**, **Configurações alteradas**, **Avisos desativados**.
-Problemas técnicos (se houver) ficam num arquivo separado, `erros.log`.
+**Contagem regressiva**, **Configurações alteradas**, **Avisos desativados**,
+**Avisos reativados**. Problemas técnicos (se houver) ficam num arquivo
+separado, `erros.log`.
 
 ### Máquina isenta
 
 Crie um arquivo vazio `DesativarAviso.txt` em `%APPDATA%\AvisoDeReinicio`.
 O programa continua rodando (e logando), mas não mostra pop-ups.
-Apague o arquivo para voltar a avisar.
+Apague o arquivo para voltar a avisar — vale no próximo ciclo (até 15 s),
+sem precisar reiniciar o programa.
 
 ### Desinstalar
 
