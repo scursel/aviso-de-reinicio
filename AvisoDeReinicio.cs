@@ -39,6 +39,7 @@ namespace AvisoDeReinicio
         public static string ConfigPath;  // config.ini
         public static string LogPath;     // log.csv
         public static string FlagPath;    // reinicio_pendente.flag
+        public static string LastBootPath; // ultimo_boot.txt
 
         [STAThread]
         private static void Main(string[] args)
@@ -72,6 +73,7 @@ namespace AvisoDeReinicio
             ConfigPath = Path.Combine(AppDir, "config.ini");
             LogPath = Path.Combine(AppDir, "log.csv");
             FlagPath = Path.Combine(AppDir, "reinicio_pendente.flag");
+            LastBootPath = Path.Combine(AppDir, "ultimo_boot.txt");
         }
 
         // Momento do ultimo boot (relogio - tempo ligado). GetTickCount64
@@ -314,7 +316,21 @@ namespace AvisoDeReinicio
         {
             _cfg = ReminderConfig.Load();
 
-            // Sessao anterior pediu reinicio? (flag deixada antes do shutdown)
+            // Detecta reinicio comparando o boot atual com o ultimo conhecido.
+            // A flag so diferencia "pelo app" de "por fora" (menu Iniciar, Update).
+            DateTime boot = Program.LastBoot();
+            DateTime previous = DateTime.MinValue;
+            try
+            {
+                if (File.Exists(Program.LastBootPath))
+                {
+                    string raw = File.ReadAllText(Program.LastBootPath).Trim();
+                    DateTime.TryParseExact(raw, "yyyy-MM-dd HH:mm:ss",
+                        CultureInfo.InvariantCulture, DateTimeStyles.None, out previous);
+                }
+            }
+            catch { }
+
             bool flagExistia = false;
             try
             {
@@ -326,12 +342,16 @@ namespace AvisoDeReinicio
             }
             catch { }
 
-            DateTime boot = Program.LastBoot();
-            if (flagExistia && (DateTime.Now - boot).TotalMinutes < 10)
+            if (previous != DateTime.MinValue && Math.Abs((boot - previous).TotalMinutes) > 2)
             {
-                // Reinicio de verdade: registra na data/hora exata do boot.
-                Program.Log(boot, Eventos.ComputadorReiniciado, "");
+                Program.Log(boot, Eventos.ComputadorReiniciado, flagExistia ? "pelo app" : "por fora");
             }
+
+            try
+            {
+                File.WriteAllText(Program.LastBootPath, boot.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture));
+            }
+            catch { }
 
             // Bandeja
             try

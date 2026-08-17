@@ -95,7 +95,7 @@ Só registra o que interessa, com nomes em português:
 | 15/08/2026 02:00 | Aviso exibido | 1º aviso do dia |
 | 15/08/2026 02:01 | Adiado (OK) | próximo aviso em 5 min |
 | 15/08/2026 02:06 | Reinício solicitado | pelo operador |
-| 15/08/2026 02:14 | Computador reiniciado | (a data/hora já mostra o momento do reinício) |
+| 15/08/2026 02:14 | Computador reiniciado | pelo app (ou "por fora", se não foi este programa) |
 
 Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
 **Reinício solicitado**, **Falha ao reiniciar**, **Computador reiniciado**,
