@@ -71,15 +71,28 @@ if (-not $SkipInno) {
     $iscc = $null
     $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
     if ($cmd) { $iscc = $cmd.Source }
+    # O Inno tambem instala por usuario (LOCALAPPDATA\Programs) e as pastas
+    # mudam de nome a cada versao maior ("Inno Setup 6", "InnoSetup7", ...).
+    # Procurar so em Program Files\Inno Setup 6 deixa instalacoes validas de fora.
     if (-not $iscc) {
-        foreach ($c in @(
-                (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
-                (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
-            )) {
-            if ($c -and (Test-Path -LiteralPath $c)) { $iscc = $c; break }
+        $bases = @(
+            (Join-Path $env:LOCALAPPDATA 'Programs'),
+            ${env:ProgramFiles(x86)},
+            $env:ProgramFiles
+        ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+
+        foreach ($base in $bases) {
+            $hit = Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -match '^Inno\s*Setup' } |
+                Sort-Object Name -Descending |
+                ForEach-Object { Join-Path $_.FullName 'ISCC.exe' } |
+                Where-Object { Test-Path -LiteralPath $_ } |
+                Select-Object -First 1
+            if ($hit) { $iscc = $hit; break }
         }
     }
-    if (-not $iscc) { throw 'ISCC.exe nao encontrado. Instale o Inno Setup 6.' }
+    if (-not $iscc) { throw 'ISCC.exe nao encontrado. Instale o Inno Setup (6 ou superior).' }
+    Write-Output ("ISCC: {0}" -f $iscc)
     New-Item -ItemType Directory -Force -Path $saida | Out-Null
     & $iscc (Join-Path $root 'instalador.iss')
     if ($LASTEXITCODE -ne 0) { throw 'ISCC.exe falhou' }
