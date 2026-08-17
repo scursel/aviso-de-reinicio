@@ -6,10 +6,13 @@
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\release.ps1
 #   powershell -File .\release.ps1 -SkipTag
 #   powershell -File .\release.ps1 -SkipInno
+#   powershell -File .\release.ps1 -PfxPath .\cert.pfx -PfxPassword $pwd
 param(
     [switch] $SkipBuild,
     [switch] $SkipInno,
-    [switch] $SkipTag
+    [switch] $SkipTag,
+    [string] $PfxPath,
+    [string] $PfxPassword
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,6 +84,31 @@ if (-not $SkipInno) {
     & $iscc (Join-Path $root 'instalador.iss')
     if ($LASTEXITCODE -ne 0) { throw 'ISCC.exe falhou' }
     if (-not (Test-Path -LiteralPath $installer)) { throw ("instalador nao gerado: {0}" -f $installer) }
+
+    if ($PfxPath) {
+        if (-not (Test-Path -LiteralPath $PfxPath)) { throw ("certificado nao encontrado: {0}" -f $PfxPath) }
+        $signtool = $null
+        $st = Get-Command signtool.exe -ErrorAction SilentlyContinue
+        if ($st) { $signtool = $st.Source }
+        if (-not $signtool) {
+            $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+            if (Test-Path $kits) {
+                $hit = Get-ChildItem -Path $kits -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+                    Where-Object { $_.FullName -match '\\x64\\' } |
+                    Select-Object -First 1
+                if ($hit) { $signtool = $hit.FullName }
+            }
+        }
+        if (-not $signtool) { throw 'signtool.exe nao encontrado (Windows SDK)' }
+        $signArgs = @('sign', '/fd', 'SHA256', '/td', 'SHA256', '/tr', 'http://timestamp.digicert.com', '/f', $PfxPath)
+        if ($PfxPassword) { $signArgs += @('/p', $PfxPassword) }
+        $signArgs += $installer
+        & $signtool @signArgs
+        if ($LASTEXITCODE -ne 0) { throw 'signtool falhou' }
+        Write-Output 'instalador assinado'
+    } else {
+        Write-Output 'sem -PfxPath: instalador nao assinado'
+    }
 
     $hash = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
     $sums = '{0}  {1}{2}' -f $hash, $installerName, [Environment]::NewLine

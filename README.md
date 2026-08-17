@@ -143,6 +143,15 @@ A versão do programa vive só em `[assembly: AssemblyVersion]` no
 `AvisoDeReinicio.cs` (hoje **1.3.0**). `release.ps1` copia esse número para
 o instalador. Use `-SkipTag` ou `-SkipInno` para testar sem tag/Inno.
 
+A distribuição **não é assinada** hoje: o SmartScreen do Windows trata o
+instalador como desconhecido e pode avisar na primeira execução. Para
+assinar depois, passe `-PfxPath` (e `-PfxPassword`) ao `release.ps1` — o
+script chama o `signtool` só quando o certificado está preenchido.
+
+O `SHA256SUMS.txt` do release prova que o arquivo baixado é o que o release
+declara. **Não** prova que o release é legítimo. Sem assinatura Authenticode,
+a segurança do parque = segurança da conta GitHub.
+
 Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho),
 `--config` (abre direto a tela de configurações) e `--selftest` (grava um log
 de teste e sai).
