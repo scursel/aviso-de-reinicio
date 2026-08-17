@@ -138,6 +138,7 @@ namespace AvisoDeReinicio
         public const string AvisosDesativados = "Avisos desativados";
         public const string AvisosReativados = "Avisos reativados";
         public const string LogLimpo = "Log limpo";
+        public const string SenhaIncorreta = "Senha incorreta";
     }
 
     // ----------------------------- entrada de log ----------------------------
@@ -352,6 +353,54 @@ namespace AvisoDeReinicio
                 diff |= xa ^ xb;
             }
             return diff == 0;
+        }
+    }
+
+    public static class PasswordPrompt
+    {
+        public static bool Ask(IWin32Window owner, ReminderConfig cfg, string motivo)
+        {
+            if (!Supervisor.IsEnabled(cfg)) return true;
+
+            using (Form f = new Form())
+            {
+                f.Text = "Senha de supervisor";
+                f.FormBorderStyle = FormBorderStyle.FixedDialog;
+                f.StartPosition = FormStartPosition.CenterScreen;
+                f.ClientSize = new Size(340, 128);
+                f.MaximizeBox = false;
+                f.MinimizeBox = false;
+                f.ShowInTaskbar = false;
+                try { f.Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+
+                Label l = new Label();
+                l.Text = motivo;
+                l.SetBounds(12, 12, 316, 20);
+                TextBox tb = new TextBox();
+                tb.UseSystemPasswordChar = true;
+                tb.SetBounds(12, 38, 316, 24);
+                Button ok = new Button();
+                ok.Text = "OK";
+                ok.DialogResult = DialogResult.OK;
+                ok.SetBounds(164, 80, 80, 28);
+                Button cancel = new Button();
+                cancel.Text = "Cancelar";
+                cancel.DialogResult = DialogResult.Cancel;
+                cancel.SetBounds(250, 80, 80, 28);
+                f.AcceptButton = ok;
+                f.CancelButton = cancel;
+                f.Controls.Add(l);
+                f.Controls.Add(tb);
+                f.Controls.Add(ok);
+                f.Controls.Add(cancel);
+
+                if (f.ShowDialog(owner) != DialogResult.OK) return false;
+                if (Supervisor.Verify(cfg, tb.Text)) return true;
+                Program.Log(Eventos.SenhaIncorreta, motivo);
+                MessageBox.Show(owner, "Senha incorreta.", "Aviso de Reinício",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
         }
     }
 
@@ -690,6 +739,8 @@ namespace AvisoDeReinicio
 
         private void OnExit(object sender, EventArgs e)
         {
+            if (_cfg.ProtegerSair && !PasswordPrompt.Ask(null, _cfg, "Sair do Aviso de Reinício"))
+                return;
             try { _timer.Stop(); } catch { }
             try { if (_tray != null) { _tray.Visible = false; _tray.Dispose(); } } catch { }
             ExitThread();
@@ -703,6 +754,9 @@ namespace AvisoDeReinicio
                 _configForm.BringToFront();
                 return;
             }
+
+            if (!PasswordPrompt.Ask(null, _cfg, "Abrir configurações"))
+                return;
 
             ConfigForm f = new ConfigForm(_cfg);
             f.ConfigSaved += OnConfigSaved;
@@ -1207,6 +1261,8 @@ namespace AvisoDeReinicio
 
         private void OnClearLog(object sender, EventArgs e)
         {
+            if (_cfg.ProtegerLimparLog && !PasswordPrompt.Ask(this, _cfg, "Arquivar log"))
+                return;
             DialogResult r = MessageBox.Show(this,
                 "Apagar todo o histórico do log?", "Aviso de Reinício",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
