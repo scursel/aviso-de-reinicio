@@ -35,7 +35,7 @@ namespace AvisoDeReinicio
         [DllImport("kernel32.dll")]
         public static extern ulong GetTickCount64();
 
-        public static string AppDir;      // %APPDATA%\RestartReminder
+        public static string AppDir;      // %APPDATA%\AvisoDeReinicio
         public static string ConfigPath;  // config.ini
         public static string LogPath;     // log.csv
         public static string FlagPath;    // reinicio_pendente.flag
@@ -247,7 +247,7 @@ namespace AvisoDeReinicio
             try
             {
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine("# Configuracao do RestartReminder");
+                sb.AppendLine("# Configuracao do AvisoDeReinicio");
                 sb.AppendLine("RestartTime=" + RestartTime.ToString(@"hh\:mm"));
                 sb.AppendLine("SnoozeMinutes=" + SnoozeMinutes);
                 sb.AppendLine("ForceEnabled=" + (ForceEnabled ? "1" : "0"));
