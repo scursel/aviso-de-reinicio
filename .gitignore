@@ -11,3 +11,6 @@ uninstall.bat
 # sistema
 Thumbs.db
 desktop.ini
+
+# indice local do CodeGraph (nao versionar)
+.codegraph/

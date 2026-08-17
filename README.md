@@ -7,8 +7,8 @@ O **Aviso de Reinício** fica na bandeja do sistema e, todos os dias no horário
 configurado (padrão **02:00**), abre um pop-up pedindo para reiniciar o
 computador. Se o funcionário estiver atendendo, ele clica em **"OK, adiar"** e
 o aviso volta depois de alguns minutos — repetindo **até o computador ser
-reiniciado**. Depois do reinício, o programa para de incomodar até o dia
-seguinte.
+reiniciado**. Depois do reinício, o programa para de incomodar pelas
+próximas 20 horas (configurável).
 
 [![Licença MIT](https://img.shields.io/badge/Licença-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/scursel/aviso-de-reinicio)](https://github.com/scursel/aviso-de-reinicio/releases)
@@ -23,16 +23,18 @@ que usa o .NET Framework que já vem no Windows 10/11.
 
 - ✅ Pop-up diário no horário preferencial (padrão 02:00, configurável)
 - ✅ Botão **"OK, adiar"** → o aviso volta após X minutos (padrão 5, configurável 1–120)
-- ✅ O aviso **não some até reiniciar** (não tem X para fechar)
+- ✅ O aviso **não tem X para fechar**; se ninguém clicar em 15 min (configurável), adia sozinho e volta depois
 - ✅ **"Reiniciar agora"** reinicia o Windows em 10 segundos
 - ✅ Tela de configurações com horário, adiamento, reinício forçado opcional e início automático
 - ✅ **Reinício forçado opcional**: após N adiamentos no mesmo dia, abre contagem de 60 s e reinicia sozinho
 - ✅ **Log completo** (CSV, abre no Excel): cada pop-up, cada "OK", o pedido de reinício e o horário exato em que o PC voltou
 - ✅ Se o PC estava desligado na hora do aviso, ele aparece logo depois que alguém ligar
-- ✅ Se o PC já foi reiniciado no dia, não incomoda de novo
+- ✅ Se o PC bootou nas últimas 20 h (configurável), não incomoda de novo
 - ✅ Sempre por cima das outras janelas (inclusive do PDV) + som de alerta
 - ✅ Isenção por máquina via arquivo `DesativarAviso.txt`
-- ✅ Rede de segurança: tarefa agendada relança o programa no logon se ele for fechado
+- ✅ Rede de segurança: tarefa agendada relança o programa no logon e a cada 10 min se ele for fechado
+- ✅ **Senha de supervisor (opt-in, desligada por padrão)**: protege abrir configurações, Sair e Arquivar log
+- ✅ **Atualização pelo GitHub (padrão: só avisar)**: checa 1×/dia a última release; menu e balão na bandeja. `AutoUpdate=1` instala sozinho só logo após o reinício diário
 
 ## Capturas de tela
 
@@ -56,15 +58,6 @@ que usa o .NET Framework que já vem no Windows 10/11.
 Também dá para usar o `AvisoDeReinicio.exe` direto (portátil): dois cliques e
 ele já funciona, sem instalar nada.
 
-### Via winget
-
-```
-winget install Scursel.AvisoDeReinicio
-```
-
-*(disponível assim que o manifesto for aprovado no repositório
-[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs))*
-
 ## Uso
 
 - **Configurar**: clique com o botão direito no ícone azul da bandeja →
@@ -79,33 +72,50 @@ winget install Scursel.AvisoDeReinicio
 |---|---|
 | Hora marcada chega (ex.: 02:00) | Pop-up aparece |
 | Funcionário clica "OK, adiar" | Volta após X minutos (sem limite de vezes) |
+| Ninguém clica (15 min, `PopupTimeoutMinutes`) | Adia sozinho, registra "Adiado (automático)" e volta |
 | Funcionário clica "Reiniciar agora" | Reinicia em 10 s e registra no log |
-| PC estava desligado às 02:00 | Aviso aparece logo após ligar (se ainda não reiniciou no dia) |
-| PC já reiniciado no dia (até 2 h antes do horário) | Não incomoda |
+| PC estava desligado às 02:00 | Aviso aparece logo após ligar (se o boot não for recente) |
+| PC bootou nas últimas 20 h (`SatisfiedHours`) | Não incomoda |
 | N adiamentos no mesmo dia (se "forçar" estiver ligado) | Contagem de 60 s e reinício automático |
 
 ### Log (simples, em português)
 
 O log fica em `%APPDATA%\AvisoDeReinicio\log.csv` (abre direto no Excel).
-Só registra o que interessa, com nomes em português:
+**Arquivar log** renomeia o arquivo para `log-AAAAMMDD.csv` e começa um
+novo, em vez de apagar o histórico. Acima de ~2 MB o programa arquiva
+sozinho. Só registra o que interessa, com nomes em português:
 
 | DataHora | Evento | Detalhe |
 |---|---|---|
 | 15/08/2026 02:00 | Aviso exibido | 1º aviso do dia |
 | 15/08/2026 02:01 | Adiado (OK) | próximo aviso em 5 min |
 | 15/08/2026 02:06 | Reinício solicitado | pelo operador |
-| 15/08/2026 02:14 | Computador reiniciado | (a data/hora já mostra o momento do reinício) |
+| 15/08/2026 02:14 | Computador reiniciado | pelo app (ou "por fora", se não foi este programa) |
 
-Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Reinício solicitado**,
-**Computador reiniciado**, **Contagem regressiva**, **Configurações alteradas**,
-**Avisos desativados**. Problemas técnicos (se houver) ficam num arquivo
-separado, `erros.log`.
+Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
+**Reinício solicitado**, **Falha ao reiniciar**, **Computador reiniciado**,
+**Contagem regressiva**, **Configurações alteradas**, **Avisos desativados**,
+**Avisos reativados**, **Log arquivado**, **Senha incorreta**,
+**Atualização disponível**, **Atualização aplicada**. Problemas técnicos
+(se houver) ficam num arquivo separado, `erros.log`.
+
+### Senha de supervisor (opt-in)
+
+Desligada por padrão: quem não configurar não vê diferença nenhuma. Na tela
+de configurações, **Definir senha de supervisor…** passa a pedir senha para
+abrir as configurações, para **Sair** e para **Arquivar log**.
+
+**Limite honesto:** sem administrador nenhuma proteção é real. O operador
+pode editar `%APPDATA%\AvisoDeReinicio\config.ini` no Bloco de Notas (apagar
+`SenhaHash`), matar o processo no Gerenciador de Tarefas, ou remover a chave
+`Run`. A senha é barreira de conveniência, não controle de segurança.
 
 ### Máquina isenta
 
 Crie um arquivo vazio `DesativarAviso.txt` em `%APPDATA%\AvisoDeReinicio`.
 O programa continua rodando (e logando), mas não mostra pop-ups.
-Apague o arquivo para voltar a avisar.
+Apague o arquivo para voltar a avisar — vale no próximo ciclo (até 15 s),
+sem precisar reiniciar o programa.
 
 ### Desinstalar
 
@@ -125,16 +135,56 @@ build.bat
 
 :: gera o instalador (saida\Instalador-*.exe)
 ISCC.exe instalador.iss
+
+:: release completo: le a versao do assembly, injeta no instalador.iss,
+:: compila, roda o Inno, grava saida\SHA256SUMS.txt e cria a tag
+powershell -NoProfile -ExecutionPolicy Bypass -File .\release.ps1
 ```
 
-Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho)
-e `--selftest` (grava um log de teste e sai).
+A versão do programa vive só em `[assembly: AssemblyVersion]` no
+`AvisoDeReinicio.cs` (hoje **1.4.0**). `release.ps1` copia esse número para
+o instalador. Use `-SkipTag` ou `-SkipInno` para testar sem tag/Inno.
+
+### Atualização automática
+
+Uma vez por dia o programa consulta
+`https://github.com/scursel/aviso-de-reinicio/releases/latest` (redirect 302,
+sem a API do GitHub). Só oferece update se a tag for **maior** que a versão
+instalada — um rollback no GitHub não rebaixa o parque. O instalador é
+conferido contra o `SHA256SUMS.txt` do mesmo release.
+
+Padrão: **avisar** (balão + item de menu). Para instalar sozinho, marque a
+opção na tela de configurações ou grave `AutoUpdate=1` no `config.ini`.
+Mesmo assim a instalação só roda nos 30 minutos depois do reinício diário,
+nunca no meio do expediente.
+
+Máquinas na v1.0.2 **não** se auto-atualizam — precisam de um empurrão
+manual até pelo menos a v1.3.0 (quando a versão passou a existir no exe).
+
+Em desligamento híbrido (Fast Startup) o uptime não zera, então
+"desligar e ligar" não conta como reinício. Para o propósito do aviso isso
+está certo.
+
+A distribuição **não é assinada** hoje: o SmartScreen do Windows trata o
+instalador como desconhecido e pode avisar na primeira execução. Para
+assinar depois, passe `-PfxPath` (e `-PfxPassword`) ao `release.ps1` — o
+script chama o `signtool` só quando o certificado está preenchido.
+
+O `SHA256SUMS.txt` do release prova que o arquivo baixado é o que o release
+declara. **Não** prova que o release é legítimo. Sem assinatura Authenticode,
+a segurança do parque = segurança da conta GitHub (o updater baixa e executa
+o instalador publicado nessa conta).
+
+Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho),
+`--config` (abre direto a tela de configurações) e `--selftest` (grava um log
+de teste e sai).
 
 ## Estrutura do repositório
 
 ```
 AvisoDeReinicio.cs   -> código-fonte completo (C# / WinForms, .NET Framework 4.x)
 build.bat            -> compila o .exe com o csc.exe do Windows
+release.ps1          -> monta o release (versao, instalador, SHA256, tag)
 instalador.iss       -> script do instalador (Inno Setup, pt-BR, sem admin)
 make-icon.ps1        -> gera o app.ico (círculo azul com seta de reinício)
 registrar-tarefa.ps1 -> cria a tarefa agendada de backup no logon
