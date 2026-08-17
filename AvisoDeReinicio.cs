@@ -138,6 +138,7 @@ namespace AvisoDeReinicio
         public const string AvisosDesativados = "Avisos desativados";
         public const string AvisosReativados = "Avisos reativados";
         public const string LogLimpo = "Log limpo";
+        public const string LogArquivado = "Log arquivado";
         public const string SenhaIncorreta = "Senha incorreta";
     }
 
@@ -1143,7 +1144,7 @@ namespace AvisoDeReinicio
             };
 
             Button btnLimpar = new Button();
-            btnLimpar.Text = "Limpar log";
+            btnLimpar.Text = "Arquivar log";
             btnLimpar.SetBounds(332, y, 110, 32);
             btnLimpar.Click += OnClearLog;
 
@@ -1264,11 +1265,30 @@ namespace AvisoDeReinicio
             if (_cfg.ProtegerLimparLog && !PasswordPrompt.Ask(this, _cfg, "Arquivar log"))
                 return;
             DialogResult r = MessageBox.Show(this,
-                "Apagar todo o histórico do log?", "Aviso de Reinício",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                "Arquivar o log atual e começar um arquivo novo?", "Aviso de Reinício",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (r != DialogResult.Yes) return;
-            try { File.WriteAllText(Program.LogPath, ""); } catch { }
-            Program.Log(Eventos.LogLimpo, "");
+
+            string destName = "log-" + DateTime.Now.ToString("yyyyMMdd") + ".csv";
+            string dest = Path.Combine(Program.AppDir, destName);
+            if (File.Exists(dest))
+            {
+                destName = "log-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".csv";
+                dest = Path.Combine(Program.AppDir, destName);
+            }
+            try
+            {
+                if (File.Exists(Program.LogPath))
+                    File.Move(Program.LogPath, dest);
+            }
+            catch (Exception ex)
+            {
+                Program.LogErro("arquivar log: " + ex.Message);
+                MessageBox.Show(this, "Não foi possível arquivar o log.", "Aviso de Reinício",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            Program.Log(Eventos.LogArquivado, destName);
             RefreshStats();
         }
     }
