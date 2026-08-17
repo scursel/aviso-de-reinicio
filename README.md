@@ -133,7 +133,15 @@ build.bat
 
 :: gera o instalador (saida\Instalador-*.exe)
 ISCC.exe instalador.iss
+
+:: release completo: le a versao do assembly, injeta no instalador.iss,
+:: compila, roda o Inno, grava saida\SHA256SUMS.txt e cria a tag
+powershell -NoProfile -ExecutionPolicy Bypass -File .\release.ps1
 ```
+
+A versão do programa vive só em `[assembly: AssemblyVersion]` no
+`AvisoDeReinicio.cs` (hoje **1.3.0**). `release.ps1` copia esse número para
+o instalador. Use `-SkipTag` ou `-SkipInno` para testar sem tag/Inno.
 
 Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho),
 `--config` (abre direto a tela de configurações) e `--selftest` (grava um log
@@ -144,6 +152,7 @@ de teste e sai).
 ```
 AvisoDeReinicio.cs   -> código-fonte completo (C# / WinForms, .NET Framework 4.x)
 build.bat            -> compila o .exe com o csc.exe do Windows
+release.ps1          -> monta o release (versao, instalador, SHA256, tag)
 instalador.iss       -> script do instalador (Inno Setup, pt-BR, sem admin)
 make-icon.ps1        -> gera o app.ico (círculo azul com seta de reinício)
 registrar-tarefa.ps1 -> cria a tarefa agendada de backup no logon

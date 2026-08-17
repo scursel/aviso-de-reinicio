@@ -1,11 +1,11 @@
-﻿; ============================================================================
+; ============================================================================
 ;  Instalador do Aviso de Reinicio
 ;  Desenvolvido por Scursel - projeto open source (licenca MIT)
 ;  Compilar com o Inno Setup: ISCC.exe instalador.iss
 ; ============================================================================
 
 #define MyAppName "Aviso de Reinício"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "Scursel"
 #define MyAppExeName "AvisoDeReinicio.exe"
 
