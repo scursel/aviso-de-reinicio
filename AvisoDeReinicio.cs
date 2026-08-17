@@ -208,6 +208,7 @@ namespace AvisoDeReinicio
         public bool ForceEnabled = false;                      // forca reinicio automatico
         public int MaxOkBeforeForce = 10;                      // apos X "OK" no mesmo dia
         public int PopupTimeoutMinutes = 15;                   // sem clique, adia sozinho
+        public int SatisfiedHours = 20;                        // boot recente = ja satisfeito
 
         public static ReminderConfig Load()
         {
@@ -243,6 +244,9 @@ namespace AvisoDeReinicio
                             case "popuptimeoutminutes":
                                 if (int.TryParse(val, out n)) c.PopupTimeoutMinutes = Math.Max(1, Math.Min(120, n));
                                 break;
+                            case "satisfiedhours":
+                                if (int.TryParse(val, out n)) c.SatisfiedHours = Math.Max(1, Math.Min(48, n));
+                                break;
                         }
                     }
                 }
@@ -262,6 +266,7 @@ namespace AvisoDeReinicio
                 sb.AppendLine("ForceEnabled=" + (ForceEnabled ? "1" : "0"));
                 sb.AppendLine("MaxOkBeforeForce=" + MaxOkBeforeForce);
                 sb.AppendLine("PopupTimeoutMinutes=" + PopupTimeoutMinutes);
+                sb.AppendLine("SatisfiedHours=" + SatisfiedHours);
                 File.WriteAllText(Program.ConfigPath, sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
@@ -448,13 +453,13 @@ namespace AvisoDeReinicio
             }
         }
 
-        // Considera "ja reiniciado hoje" se o ultimo boot aconteceu a partir de
-        // 2 horas antes do horario preferencial (aceita quem reiniciou um pouco
-        // antes da hora marcada).
+        // Considera satisfeito se o PC bootou nas ultimas N horas (padrao 20).
+        // Janela deslizante: nao quebra perto da meia-noite nem com loja que
+        // fecha 22:00 e horario preferencial 02:00.
         private bool SatisfiedToday()
         {
-            DateTime limite = DateTime.Today.Add(_cfg.RestartTime).Subtract(TimeSpan.FromHours(2));
-            return Program.LastBoot() >= limite;
+            int hours = Math.Max(1, Math.Min(48, _cfg.SatisfiedHours));
+            return Program.LastBoot() >= DateTime.Now.AddHours(-hours);
         }
 
         private void RecomputeNextPopup()

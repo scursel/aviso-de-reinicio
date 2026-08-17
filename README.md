@@ -7,8 +7,8 @@ O **Aviso de Reinício** fica na bandeja do sistema e, todos os dias no horário
 configurado (padrão **02:00**), abre um pop-up pedindo para reiniciar o
 computador. Se o funcionário estiver atendendo, ele clica em **"OK, adiar"** e
 o aviso volta depois de alguns minutos — repetindo **até o computador ser
-reiniciado**. Depois do reinício, o programa para de incomodar até o dia
-seguinte.
+reiniciado**. Depois do reinício, o programa para de incomodar pelas
+próximas 20 horas (configurável).
 
 [![Licença MIT](https://img.shields.io/badge/Licença-MIT-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/scursel/aviso-de-reinicio)](https://github.com/scursel/aviso-de-reinicio/releases)
@@ -29,7 +29,7 @@ que usa o .NET Framework que já vem no Windows 10/11.
 - ✅ **Reinício forçado opcional**: após N adiamentos no mesmo dia, abre contagem de 60 s e reinicia sozinho
 - ✅ **Log completo** (CSV, abre no Excel): cada pop-up, cada "OK", o pedido de reinício e o horário exato em que o PC voltou
 - ✅ Se o PC estava desligado na hora do aviso, ele aparece logo depois que alguém ligar
-- ✅ Se o PC já foi reiniciado no dia, não incomoda de novo
+- ✅ Se o PC bootou nas últimas 20 h (configurável), não incomoda de novo
 - ✅ Sempre por cima das outras janelas (inclusive do PDV) + som de alerta
 - ✅ Isenção por máquina via arquivo `DesativarAviso.txt`
 - ✅ Rede de segurança: tarefa agendada relança o programa no logon se ele for fechado
@@ -81,8 +81,8 @@ winget install Scursel.AvisoDeReinicio
 | Funcionário clica "OK, adiar" | Volta após X minutos (sem limite de vezes) |
 | Ninguém clica (15 min, `PopupTimeoutMinutes`) | Adia sozinho, registra "Adiado (automático)" e volta |
 | Funcionário clica "Reiniciar agora" | Reinicia em 10 s e registra no log |
-| PC estava desligado às 02:00 | Aviso aparece logo após ligar (se ainda não reiniciou no dia) |
-| PC já reiniciado no dia (até 2 h antes do horário) | Não incomoda |
+| PC estava desligado às 02:00 | Aviso aparece logo após ligar (se o boot não for recente) |
+| PC bootou nas últimas 20 h (`SatisfiedHours`) | Não incomoda |
 | N adiamentos no mesmo dia (se "forçar" estiver ligado) | Contagem de 60 s e reinício automático |
 
 ### Log (simples, em português)
