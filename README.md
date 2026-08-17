@@ -56,15 +56,6 @@ que usa o .NET Framework que já vem no Windows 10/11.
 Também dá para usar o `AvisoDeReinicio.exe` direto (portátil): dois cliques e
 ele já funciona, sem instalar nada.
 
-### Via winget
-
-```
-winget install Scursel.AvisoDeReinicio
-```
-
-*(disponível assim que o manifesto for aprovado no repositório
-[microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs))*
-
 ## Uso
 
 - **Configurar**: clique com o botão direito no ícone azul da bandeja →
