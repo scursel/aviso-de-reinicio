@@ -993,6 +993,13 @@ namespace AvisoDeReinicio
             _t.Interval = 1000;
             _t.Tick += delegate
             {
+                try
+                {
+                    TopMost = true;
+                    Activate();
+                    BringToFront();
+                }
+                catch { }
                 _secondsLeft--;
                 if (_secondsLeft <= 0)
                 {
