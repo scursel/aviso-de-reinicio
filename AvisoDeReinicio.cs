@@ -916,7 +916,7 @@ namespace AvisoDeReinicio
 
                 _lblStats.Text =
                     "Hoje: " + pops + " avisos exibidos · " + oks + " adiamentos (OK) · Total de adiamentos: " + totalOks + "\n" +
-                    "Último reinício: " + Program.Fmt(boot) + " (há " + UpText(boot) + ") · Tempo ligado: " + UpText(boot) + "\n" +
+                    "Último reinício: " + Program.Fmt(boot) + " · Tempo ligado: " + UpText(boot) + "\n" +
                     "Dados: " + Program.AppDir + "   |   Desenvolvido por Scursel";
             }
             catch { }
