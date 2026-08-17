@@ -127,8 +127,9 @@ build.bat
 ISCC.exe instalador.iss
 ```
 
-Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho)
-e `--selftest` (grava um log de teste e sai).
+Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho),
+`--config` (abre direto a tela de configurações) e `--selftest` (grava um log
+de teste e sai).
 
 ## Estrutura do repositório
 
