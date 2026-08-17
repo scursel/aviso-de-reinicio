@@ -298,7 +298,8 @@ namespace AvisoDeReinicio
         private ReminderConfig _cfg;
         private DateTime _nextPopup;
         private DateTime _lastDay;
-        private Form _openForm;              // pop-up/countdown aberto
+        private Form _openForm;              // pop-up/countdown/config aberto
+        private ConfigForm _configForm;      // uma unica tela de configuracoes
         private bool _forceDemo;
         private bool _disabled;
 
@@ -512,8 +513,23 @@ namespace AvisoDeReinicio
 
         public void ShowConfig()
         {
+            if (_configForm != null && !_configForm.IsDisposed)
+            {
+                _configForm.Activate();
+                _configForm.BringToFront();
+                return;
+            }
+
             ConfigForm f = new ConfigForm(_cfg);
             f.ConfigSaved += OnConfigSaved;
+            _configForm = f;
+            // Impede que o pop-up surja por cima da tela de configuracoes.
+            if (_openForm == null) _openForm = f;
+            f.FormClosed += delegate
+            {
+                if (_openForm == f) _openForm = null;
+                if (_configForm == f) _configForm = null;
+            };
             f.Show();
             f.Activate();
         }
