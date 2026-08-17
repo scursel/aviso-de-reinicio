@@ -5,7 +5,7 @@
 ; ============================================================================
 
 #define MyAppName "Aviso de Reinício"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.4.0"
 #define MyAppPublisher "Scursel"
 #define MyAppExeName "AvisoDeReinicio.exe"
 
@@ -29,6 +29,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ShowLanguageDialog=no
+AppMutex=AvisoDeReinicio_SingleInstance,Local\AvisoDeReinicio_SingleInstance
 
 [Languages]
 Name: "portuguesebr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
@@ -51,6 +52,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\registrar-tarefa.ps1"""; Flags: runhidden nowait
 Filename: "{app}\{#MyAppExeName}"; Description: "Iniciar o {#MyAppName} agora"; Flags: nowait postinstall skipifsilent
+; Upgrade silencioso (updater): skipifsilent acima nao relanca o app. Esta entrada cobre /VERYSILENT.
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait; Check: WizardSilent
 
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/IM AvisoDeReinicio.exe /F"; Flags: runhidden; RunOnceId: "KillApp"
