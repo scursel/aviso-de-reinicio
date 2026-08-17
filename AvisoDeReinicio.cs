@@ -126,6 +126,7 @@ namespace AvisoDeReinicio
     {
         public const string AvisoExibido = "Aviso exibido";
         public const string AdiadoOk = "Adiado (OK)";
+        public const string AdiadoAutomatico = "Adiado (automático)";
         public const string ReinicioSolicitado = "Reinício solicitado";
         public const string ComputadorReiniciado = "Computador reiniciado";
         public const string ContagemRegressiva = "Contagem regressiva";
@@ -202,6 +203,7 @@ namespace AvisoDeReinicio
         public int SnoozeMinutes = 5;                          // pop-up volta apos X min
         public bool ForceEnabled = false;                      // forca reinicio automatico
         public int MaxOkBeforeForce = 10;                      // apos X "OK" no mesmo dia
+        public int PopupTimeoutMinutes = 15;                   // sem clique, adia sozinho
 
         public static ReminderConfig Load()
         {
@@ -234,6 +236,9 @@ namespace AvisoDeReinicio
                             case "maxokbeforeforce":
                                 if (int.TryParse(val, out n)) c.MaxOkBeforeForce = Math.Max(1, Math.Min(50, n));
                                 break;
+                            case "popuptimeoutminutes":
+                                if (int.TryParse(val, out n)) c.PopupTimeoutMinutes = Math.Max(1, Math.Min(120, n));
+                                break;
                         }
                     }
                 }
@@ -252,6 +257,7 @@ namespace AvisoDeReinicio
                 sb.AppendLine("SnoozeMinutes=" + SnoozeMinutes);
                 sb.AppendLine("ForceEnabled=" + (ForceEnabled ? "1" : "0"));
                 sb.AppendLine("MaxOkBeforeForce=" + MaxOkBeforeForce);
+                sb.AppendLine("PopupTimeoutMinutes=" + PopupTimeoutMinutes);
                 File.WriteAllText(Program.ConfigPath, sb.ToString(), new UTF8Encoding(false));
             }
             catch { }
@@ -437,6 +443,7 @@ namespace AvisoDeReinicio
             PopupForm f = new PopupForm(_cfg);
             f.RestartRequested += DoRestartManual;
             f.SnoozeRequested += OnSnooze;
+            f.AutoSnoozeRequested += OnAutoSnooze;
             _openForm = f;
             f.FormClosed += delegate { _openForm = null; };
             string detPopup = isTest
@@ -463,11 +470,22 @@ namespace AvisoDeReinicio
         private void DoRestartManual() { DoRestart(false); }
         private void DoRestartForced(bool forced) { DoRestart(forced); }
 
-        private void OnSnooze()
+        private int ScheduleNextPopup()
         {
             int sn = Math.Max(1, _cfg.SnoozeMinutes);
             _nextPopup = DateTime.Now.AddMinutes(sn);
+            return sn;
+        }
+
+        private void OnSnooze()
+        {
+            int sn = ScheduleNextPopup();
             Program.Log(Eventos.AdiadoOk, "próximo aviso em " + sn + " min");
+        }
+
+        private void OnAutoSnooze()
+        {
+            ScheduleNextPopup();
         }
 
         private void DoRestart(bool forced)
@@ -544,7 +562,12 @@ namespace AvisoDeReinicio
     {
         public event Action RestartRequested;
         public event Action SnoozeRequested;
+        public event Action AutoSnoozeRequested;
         private bool _done;
+        private System.Windows.Forms.Timer _watch;
+        private DateTime _shownAt;
+        private int _timeoutMin;
+        private int _snoozeMin;
 
         public PopupForm(ReminderConfig cfg)
         {
@@ -556,6 +579,10 @@ namespace AvisoDeReinicio
             ClientSize = new Size(480, 250);
             Text = "Aviso de Reinício";
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+
+            _timeoutMin = Math.Max(1, Math.Min(120, cfg.PopupTimeoutMinutes));
+            _snoozeMin = Math.Max(1, cfg.SnoozeMinutes);
+            _shownAt = DateTime.Now;
 
             DateTime boot = Program.LastBoot();
 
@@ -607,6 +634,29 @@ namespace AvisoDeReinicio
                 Activate();
                 BringToFront();
             };
+
+            _watch = new System.Windows.Forms.Timer();
+            _watch.Interval = 15000;
+            _watch.Tick += OnWatchTick;
+            _watch.Start();
+            FormClosed += delegate
+            {
+                try { if (_watch != null) { _watch.Stop(); _watch.Dispose(); } } catch { }
+            };
+        }
+
+        private void OnWatchTick(object sender, EventArgs e)
+        {
+            try
+            {
+                TopMost = true;
+                Activate();
+                BringToFront();
+            }
+            catch { }
+
+            if ((DateTime.Now - _shownAt).TotalMinutes >= _timeoutMin)
+                FinishAuto();
         }
 
         private static string UptimeText(DateTime boot)
@@ -620,6 +670,7 @@ namespace AvisoDeReinicio
         {
             if (_done) return;
             _done = true;
+            try { if (_watch != null) _watch.Stop(); } catch { }
             if (restart)
             {
                 if (RestartRequested != null) RestartRequested();
@@ -628,6 +679,17 @@ namespace AvisoDeReinicio
             {
                 if (SnoozeRequested != null) SnoozeRequested();
             }
+            Close();
+        }
+
+        private void FinishAuto()
+        {
+            if (_done) return;
+            _done = true;
+            try { if (_watch != null) _watch.Stop(); } catch { }
+            Program.Log(Eventos.AdiadoAutomatico,
+                "sem interação por " + _timeoutMin + " min · próximo aviso em " + _snoozeMin + " min");
+            if (AutoSnoozeRequested != null) AutoSnoozeRequested();
             Close();
         }
 

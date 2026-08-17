@@ -23,7 +23,7 @@ que usa o .NET Framework que já vem no Windows 10/11.
 
 - ✅ Pop-up diário no horário preferencial (padrão 02:00, configurável)
 - ✅ Botão **"OK, adiar"** → o aviso volta após X minutos (padrão 5, configurável 1–120)
-- ✅ O aviso **não some até reiniciar** (não tem X para fechar)
+- ✅ O aviso **não tem X para fechar**; se ninguém clicar em 15 min (configurável), adia sozinho e volta depois
 - ✅ **"Reiniciar agora"** reinicia o Windows em 10 segundos
 - ✅ Tela de configurações com horário, adiamento, reinício forçado opcional e início automático
 - ✅ **Reinício forçado opcional**: após N adiamentos no mesmo dia, abre contagem de 60 s e reinicia sozinho
@@ -79,6 +79,7 @@ winget install Scursel.AvisoDeReinicio
 |---|---|
 | Hora marcada chega (ex.: 02:00) | Pop-up aparece |
 | Funcionário clica "OK, adiar" | Volta após X minutos (sem limite de vezes) |
+| Ninguém clica (15 min, `PopupTimeoutMinutes`) | Adia sozinho, registra "Adiado (automático)" e volta |
 | Funcionário clica "Reiniciar agora" | Reinicia em 10 s e registra no log |
 | PC estava desligado às 02:00 | Aviso aparece logo após ligar (se ainda não reiniciou no dia) |
 | PC já reiniciado no dia (até 2 h antes do horário) | Não incomoda |
@@ -96,10 +97,10 @@ Só registra o que interessa, com nomes em português:
 | 15/08/2026 02:06 | Reinício solicitado | pelo operador |
 | 15/08/2026 02:14 | Computador reiniciado | (a data/hora já mostra o momento do reinício) |
 
-Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Reinício solicitado**,
-**Computador reiniciado**, **Contagem regressiva**, **Configurações alteradas**,
-**Avisos desativados**. Problemas técnicos (se houver) ficam num arquivo
-separado, `erros.log`.
+Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
+**Reinício solicitado**, **Computador reiniciado**, **Contagem regressiva**,
+**Configurações alteradas**, **Avisos desativados**. Problemas técnicos (se
+houver) ficam num arquivo separado, `erros.log`.
 
 ### Máquina isenta
 
