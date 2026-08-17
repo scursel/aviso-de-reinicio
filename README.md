@@ -98,9 +98,9 @@ Só registra o que interessa, com nomes em português:
 | 15/08/2026 02:14 | Computador reiniciado | (a data/hora já mostra o momento do reinício) |
 
 Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
-**Reinício solicitado**, **Computador reiniciado**, **Contagem regressiva**,
-**Configurações alteradas**, **Avisos desativados**. Problemas técnicos (se
-houver) ficam num arquivo separado, `erros.log`.
+**Reinício solicitado**, **Falha ao reiniciar**, **Computador reiniciado**,
+**Contagem regressiva**, **Configurações alteradas**, **Avisos desativados**.
+Problemas técnicos (se houver) ficam num arquivo separado, `erros.log`.
 
 ### Máquina isenta
 

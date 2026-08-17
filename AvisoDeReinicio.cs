@@ -128,6 +128,7 @@ namespace AvisoDeReinicio
         public const string AdiadoOk = "Adiado (OK)";
         public const string AdiadoAutomatico = "Adiado (automático)";
         public const string ReinicioSolicitado = "Reinício solicitado";
+        public const string FalhaAoReiniciar = "Falha ao reiniciar";
         public const string ComputadorReiniciado = "Computador reiniciado";
         public const string ContagemRegressiva = "Contagem regressiva";
         public const string ConfiguracoesAlteradas = "Configurações alteradas";
@@ -490,24 +491,74 @@ namespace AvisoDeReinicio
 
         private void DoRestart(bool forced)
         {
-            Program.Log(Eventos.ReinicioSolicitado, forced ? "automático" : "pelo operador");
             try
             {
                 File.WriteAllText(Program.FlagPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Program.LogErro("flag: " + ex.Message);
+            }
 
+            string origem = forced ? "automático" : "pelo operador";
+            string msg = forced
+                ? "Reinício automático programado (Aviso de Reinício)"
+                : "Reinício solicitado pelo operador (Aviso de Reinício)";
+            string args = "/r /t 10 " + (forced ? "/f " : "") + "/c \"" + msg + "\"";
+
+            if (TryShutdown(args, origem, false))
+                return;
+            TryShutdown("/r /t 10", origem, true);
+        }
+
+        private bool TryShutdown(string args, string origem, bool fallback)
+        {
             try
             {
-                string msg = forced
-                    ? "Reinício automático programado (Aviso de Reinício)"
-                    : "Reinício solicitado pelo operador (Aviso de Reinício)";
-                string args = "/r /t 10 " + (forced ? "/f " : "") + "/c \"" + msg + "\"";
-                Process.Start("shutdown.exe", args);
+                ProcessStartInfo psi = new ProcessStartInfo();
+                psi.FileName = "shutdown.exe";
+                psi.Arguments = args;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardError = true;
+                using (Process p = Process.Start(psi))
+                {
+                    if (p == null)
+                        throw new InvalidOperationException("Process.Start retornou null");
+                    p.WaitForExit(5000);
+                    if (!p.HasExited || p.ExitCode != 0)
+                    {
+                        string err = "";
+                        try { err = p.StandardError.ReadToEnd(); } catch { }
+                        string detalhe = "exit " + (p.HasExited ? p.ExitCode.ToString() : "timeout") +
+                                         (err.Length > 0 ? " · " + err.Trim() : "");
+                        if (fallback)
+                        {
+                            Program.LogErro("shutdown fallback: " + detalhe);
+                            Program.Log(Eventos.FalhaAoReiniciar, detalhe);
+                            return false;
+                        }
+                        Program.LogErro("shutdown: " + detalhe);
+                        return false;
+                    }
+                }
+                Program.Log(Eventos.ReinicioSolicitado, fallback ? origem + " (fallback)" : origem);
+                // Evita pop-up fantasma na janela de 10 s do shutdown.exe.
+                _nextPopup = DateTime.Now.AddMinutes(3);
+                return true;
             }
-            catch
+            catch (Exception ex)
             {
-                try { Process.Start("shutdown.exe", "/r /t 10"); } catch { }
+                if (fallback)
+                {
+                    Program.LogErro("shutdown fallback: " + ex.Message);
+                    Program.Log(Eventos.FalhaAoReiniciar, ex.Message);
+                }
+                else
+                {
+                    Program.LogErro("shutdown: " + ex.Message);
+                }
+                return false;
             }
         }
 
