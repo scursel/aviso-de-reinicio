@@ -196,12 +196,27 @@ O script baixa o instalador da release do GitHub, confere o SHA256 contra o
 `SHA256SUMS.txt` do mesmo release, fecha o app, instala em modo silencioso e
 confirma a versão gravada no disco — falhando alto se algo não bater. Não
 precisa de administrador; a exceção é a instância em execução estar elevada,
-caso em que o script avisa (encerre o app pelo ícone da bandeja e rode de
-novo, ou use um prompt de admin). Na próxima release, normalmente só o `-Tag`
-muda (o hash é lido do próprio release):
+caso em que o script avisa (encerre o app pelo ícone da bandeira e rode de
+novo, ou use um prompt de admin). É **idempotente**: em máquina já na versão
+alvo apenas informa "nada a fazer" — pode rodar no parque inteiro sem separar
+as máquinas. Na próxima release, normalmente só o `-Tag` muda (o hash é lido
+do próprio release):
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -File .\atualizar-maquinas.ps1 -Tag v1.6.0
+```
+
+Sem baixar o repositório, direto do **prompt do PowerShell** da máquina:
+
+```powershell
+$d = Join-Path $env:TEMP 'atualizar-aviso.ps1'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/scursel/aviso-de-reinicio/main/atualizar-maquinas.ps1', $d); powershell -NoProfile -ExecutionPolicy Bypass -File $d
+```
+
+No prompt do **CMD**, use a mesma sequência embrulhada num `-Command` com aspas
+duplas (o CMD não expande `$d`, ao contrário do PowerShell):
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $d=Join-Path $env:TEMP 'atualizar-aviso.ps1'; (New-Object Net.WebClient).DownloadFile('https://raw.githubusercontent.com/scursel/aviso-de-reinicio/main/atualizar-maquinas.ps1',$d); powershell -NoProfile -ExecutionPolicy Bypass -File $d"
 ```
 
 Máquinas na v1.0.2 **não** se auto-atualizam — precisam de um empurrão
