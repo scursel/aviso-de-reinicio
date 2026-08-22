@@ -21,20 +21,24 @@ que usa o .NET Framework que já vem no Windows 10/11.
 
 ## Funcionalidades
 
-- ✅ Pop-up diário no horário preferencial (padrão 02:00, configurável)
-- ✅ Botão **"OK, adiar"** → o aviso volta após X minutos (padrão 5, configurável 1–120)
-- ✅ O aviso **não tem X para fechar**; se ninguém clicar em 15 min (configurável), adia sozinho e volta depois
+- ✅ **Dois modos de aviso** (configurável na tela de configurações):
+  - **Horário fixo** (padrão): avisa todo dia às HH:MM (padrão 02:00), desde que o PC
+    esteja ligado há pelo menos X horas naquele momento (padrão 20 h). Avaliado
+    **somente no horário do dia** — nunca dispara fora dele por causa do uptime.
+  - **Ciclo por uptime**: avisa quando o PC passar de N horas ligado (padrão 24),
+    em qualquer horário, repetindo até o reinício.
+- ✅ Botão **"OK, adiar"** → o aviso volta após X minutos (padrão 5, configurável 1–120) e **não desaparece mais**: uma vez iniciado, o ciclo só termina com um reinício real
+- ✅ O aviso **não tem X para fechar**; se ninguém clicar em 15 min (configurável), adia sozinho e volta depois. Alt+F4/Gerenciador de Tarefas registra "Adiado (janela fechada)" e o aviso volta do mesmo jeito
 - ✅ **"Reiniciar agora"** reinicia o Windows em 10 segundos
-- ✅ Tela de configurações com horário, adiamento, reinício forçado opcional e início automático
-- ✅ **Reinício forçado opcional**: após N adiamentos no mesmo dia, abre contagem de 60 s e reinicia sozinho
+- ✅ Tela de configurações com modo, horário, adiamento, reinício forçado opcional e início automático
+- ✅ **Reinício forçado opcional**: após N adiamentos no mesmo ciclo, abre contagem de 60 s e reinicia sozinho
 - ✅ **Log completo** (CSV, abre no Excel): cada pop-up, cada "OK", o pedido de reinício e o horário exato em que o PC voltou
-- ✅ Se o PC estava desligado na hora do aviso, ele aparece logo depois que alguém ligar
-- ✅ Se o PC bootou nas últimas 20 h (configurável), não incomoda de novo
-- ✅ Sempre por cima das outras janelas (inclusive do PDV) + som de alerta
+- ✅ Se o app estava fechado/suspenso na hora do aviso elegível, faz catch-up ~45 s depois de voltar
+- ✅ Sempre por cima das outras janelas (inclusive do PDV) + som de alerta; tenta o foco **uma vez** ao abrir e nunca rouba o foco do operador depois
 - ✅ Isenção por máquina via arquivo `DesativarAviso.txt`
-- ✅ Rede de segurança: tarefa agendada relança o programa no logon e a cada 10 min se ele for fechado
+- ✅ Rede de segurança: tarefa agendada relança o programa no logon e a cada 10 min se ele for fechado — e o ciclo de aviso é **reconstruído** ao relançar (só um boot novo encerra um ciclo)
 - ✅ **Senha de supervisor (opt-in, desligada por padrão)**: protege abrir configurações, Sair e Arquivar log
-- ✅ **Atualização pelo GitHub (padrão: só avisar)**: checa 1×/dia a última release; menu e balão na bandeja. `AutoUpdate=1` instala sozinho só logo após o reinício diário
+- ✅ **Atualização pelo GitHub (padrão: instalar)**: checa 1×/dia a última release; menu e balão na bandeja. Com o padrão (`AutoUpdate=1`), instala sozinho só logo após um boot recente (30 min); desligado, só avisa
 
 ## Capturas de tela
 
@@ -68,15 +72,36 @@ ele já funciona, sem instalar nada.
 
 ### Regras do lembrete
 
+**Modo "horário fixo"** (padrão, `RestartMode=fixo`): a elegibilidade é avaliada
+**no horário do dia** (`RestartTime`, padrão 02:00): o pop-up aparece se, naquele
+instante, o PC está ligado há ≥ `SatisfiedHours` (padrão 20 h). Exemplos com
+02:00/20 h:
+
 | Situação | Comportamento |
 |---|---|
-| Hora marcada chega (ex.: 02:00) | Pop-up aparece |
-| Funcionário clica "OK, adiar" | Volta após X minutos (sem limite de vezes) |
-| Ninguém clica (15 min, `PopupTimeoutMinutes`) | Adia sozinho, registra "Adiado (automático)" e volta |
+| Às 02:00 o PC está ligado há 20 h ou mais | Pop-up aparece às 02:00 |
+| Boot às 10:00 (16 h às 02:00 seguinte) | **Nada** ao completar 20 h (às 06:00); pop-up só no **próximo** 02:00 (uptime 40 h) — sem deriva de horário |
+| Boot depois do slot (PC desligado à noite) | Sem catch-up naquele dia; máquina que desliga/liga diariamente não é incomodada |
+| App fechado/suspenso no slot elegível | Catch-up ~45 s depois de voltar |
+| Reinício às 02:10 | Próximo aviso às **02:00** do dia seguinte (uptime 23 h 50 ≥ 20 h) |
+
+**Modo "ciclo por uptime"** (`RestartMode=uptime`): o pop-up aparece quando o PC
+passa de `UptimeHours` ligado (padrão 24), em qualquer horário, e volta a cada
+adiamento até um reinício real. Quem reinicia no primeiro aviso fica ancorado no
+mesmo horário todos os dias (24 h depois do boot). Suspensão conta como tempo
+ligado; mudança do relógio não afeta este modo.
+
+Em ambos os modos: uma vez aberto o primeiro pop-up, o ciclo só termina com um
+boot novo — meia-noite, crash, saída ou relançamento do app não o cancelam (o
+estado é reconstruído a partir do uptime). "OK, adiar" volta após X minutos
+(configurável). Sem clique por `PopupTimeoutMinutes`, adia sozinho. Alt+F4
+registra "Adiado (janela fechada)" e agenda o retorno normalmente.
+
+| Demais situações | Comportamento |
+|---|---|
 | Funcionário clica "Reiniciar agora" | Reinicia em 10 s e registra no log |
-| PC estava desligado às 02:00 | Aviso aparece logo após ligar (se o boot não for recente) |
-| PC bootou nas últimas 20 h (`SatisfiedHours`) | Não incomoda |
-| N adiamentos no mesmo dia (se "forçar" estiver ligado) | Contagem de 60 s e reinício automático |
+| N adiamentos no mesmo ciclo (se "forçar" estiver ligado) | Contagem de 60 s e reinício automático |
+| Pop-up de teste ("Testar agora" / `--demo`) | Isolado: não inicia ciclo, não loga eventos de produção e não conta para a força |
 
 ### Log (simples, em português)
 
@@ -93,11 +118,11 @@ sozinho. Só registra o que interessa, com nomes em português:
 | 15/08/2026 02:14 | Computador reiniciado | pelo app (ou "por fora", se não foi este programa) |
 
 Possíveis eventos: **Aviso exibido**, **Adiado (OK)**, **Adiado (automático)**,
-**Reinício solicitado**, **Falha ao reiniciar**, **Computador reiniciado**,
-**Contagem regressiva**, **Configurações alteradas**, **Avisos desativados**,
-**Avisos reativados**, **Log arquivado**, **Senha incorreta**,
-**Atualização disponível**, **Atualização aplicada**. Problemas técnicos
-(se houver) ficam num arquivo separado, `erros.log`.
+**Adiado (janela fechada)**, **Reinício solicitado**, **Falha ao reiniciar**,
+**Computador reiniciado**, **Contagem regressiva**, **Configurações alteradas**,
+**Avisos desativados**, **Avisos reativados**, **Log arquivado**,
+**Senha incorreta**, **Atualização disponível**, **Atualização aplicada**.
+Problemas técnicos (se houver) ficam num arquivo separado, `erros.log`.
 
 ### Senha de supervisor (opt-in)
 
@@ -142,7 +167,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\release.ps1
 ```
 
 A versão do programa vive só em `[assembly: AssemblyVersion]` no
-`AvisoDeReinicio.cs` (hoje **1.4.0**). `release.ps1` copia esse número para
+`AvisoDeReinicio.cs` (hoje **1.5.0**). `release.ps1` copia esse número para
 o instalador. Use `-SkipTag` ou `-SkipInno` para testar sem tag/Inno.
 
 ### Atualização automática
@@ -153,10 +178,11 @@ sem a API do GitHub). Só oferece update se a tag for **maior** que a versão
 instalada — um rollback no GitHub não rebaixa o parque. O instalador é
 conferido contra o `SHA256SUMS.txt` do mesmo release.
 
-Padrão: **avisar** (balão + item de menu). Para instalar sozinho, marque a
-opção na tela de configurações ou grave `AutoUpdate=1` no `config.ini`.
-Mesmo assim a instalação só roda nos 30 minutos depois do reinício diário,
-nunca no meio do expediente.
+Padrão: **instalar sozinho** (balão + item de menu avisam quando há novidade;
+a instalação só roda nos 30 minutos depois de um boot recente, nunca no meio
+do expediente). Para só ser avisado, desmarque a opção na tela de
+configurações ou grave `AutoUpdate=0` no `config.ini`. Máquinas antigas cujo
+`config.ini` já traz `AutoUpdate=0` gravado mantêm a escolha explícita.
 
 Máquinas na v1.0.2 **não** se auto-atualizam — precisam de um empurrão
 manual até pelo menos a v1.3.0 (quando a versão passou a existir no exe).
@@ -175,9 +201,12 @@ declara. **Não** prova que o release é legítimo. Sem assinatura Authenticode,
 a segurança do parque = segurança da conta GitHub (o updater baixa e executa
 o instalador publicado nessa conta).
 
-Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up sozinho),
-`--config` (abre direto a tela de configurações) e `--selftest` (grava um log
-de teste e sai).
+Flags de desenvolvimento: `AvisoDeReinicio.exe --demo` (abre o pop-up de teste
+sozinho — isolado, sem efeitos no agendador), `--config` (abre direto a tela de
+configurações), `--appdir <caminho>` (usa outro diretório de dados e outro
+mutex, para testar uma instância ao lado da real) e `--selftest` (roda os testes
+determinísticos do agendador em `%TEMP%\AvisoDeReinicioSelftest`, sem tocar no
+seu config/log; sai com código 0=ok / 1=falha).
 
 ## Estrutura do repositório
 

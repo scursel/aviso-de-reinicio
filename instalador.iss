@@ -5,7 +5,7 @@
 ; ============================================================================
 
 #define MyAppName "Aviso de Reinício"
-#define MyAppVersion "1.4.0"
+#define MyAppVersion "1.5.0"
 #define MyAppPublisher "Scursel"
 #define MyAppExeName "AvisoDeReinicio.exe"
 

@@ -14,3 +14,5 @@ desktop.ini
 
 # indice local do CodeGraph (nao versionar)
 .codegraph/
+# artefatos locais do agente de desenvolvimento
+.zcode/

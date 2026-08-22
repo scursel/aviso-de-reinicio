@@ -35,8 +35,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Scursel")]
 [assembly: AssemblyProduct("Aviso de Reinício")]
 [assembly: AssemblyCopyright("Desenvolvido por Scursel")]
-[assembly: AssemblyVersion("1.4.0.0")]
-[assembly: AssemblyFileVersion("1.4.0.0")]
+[assembly: AssemblyVersion("1.5.0.0")]
+[assembly: AssemblyFileVersion("1.5.0.0")]
 
 namespace AvisoDeReinicio
 {
@@ -56,31 +56,49 @@ namespace AvisoDeReinicio
         [STAThread]
         private static void Main(string[] args)
         {
-            // Modo de autoteste (usado na construcao): grava um log e sai.
+            // Autoteste (usado na construcao): roda testes determinísticos em um
+            // diretorio temporario proprio (nada toca no config/log do usuario)
+            // e sai com codigo 0 (ok) ou 1 (falha).
             if (args.Length > 0 && string.Equals(args[0], "--selftest", StringComparison.OrdinalIgnoreCase))
             {
-                InitPaths();
-                ReminderConfig cfg = ReminderConfig.Load();
-                Log("Teste automático", "selftest ok");
-                Environment.Exit(0);
+                string dir = Path.Combine(Path.GetTempPath(), "AvisoDeReinicioSelftest");
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+                InitPaths(dir);
+                List<string> falhas = SelfTest.Executar();
+                Log("Teste automático",
+                    "selftest: " + (falhas.Count == 0 ? "OK" : falhas.Count + " falha(s)"));
+                foreach (string f in falhas) LogErro(f);
+                Environment.Exit(falhas.Count == 0 ? 0 : 1);
             }
 
-            // Uma unica instancia por usuario.
+            // Diretorio de dados alternativo, para desenvolvimento/testes:
+            // AvisoDeReinicio.exe --appdir <caminho> [--demo|--config]
+            string appDir = null;
+            for (int i = 0; i + 1 < args.Length; i++)
+                if (string.Equals(args[i], "--appdir", StringComparison.OrdinalIgnoreCase))
+                { appDir = args[i + 1]; break; }
+
+            // Uma unica instancia por usuario (a instancia de teste usa outro mutex).
             bool createdNew;
-            using (Mutex mtx = new Mutex(true, @"Local\AvisoDeReinicio_SingleInstance", out createdNew))
+            string mutexName = (appDir == null)
+                ? @"Local\AvisoDeReinicio_SingleInstance"
+                : @"Local\AvisoDeReinicio_SingleInstance_Teste";
+            using (Mutex mtx = new Mutex(true, mutexName, out createdNew))
             {
                 if (!createdNew) return;
 
-                InitPaths();
+                InitPaths(appDir);
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new TrayApp());
             }
         }
 
-        public static void InitPaths()
+        public static void InitPaths(string appDirOverride)
         {
-            AppDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AvisoDeReinicio");
+            AppDir = (appDirOverride != null)
+                ? Path.GetFullPath(appDirOverride)
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AvisoDeReinicio");
             Directory.CreateDirectory(AppDir);
             ConfigPath = Path.Combine(AppDir, "config.ini");
             LogPath = Path.Combine(AppDir, "log.csv");
@@ -175,12 +193,346 @@ namespace AvisoDeReinicio
         }
     }
 
+    // -------------------- calculos temporais (funcoes puras) -----------------
+    public enum ModoReinicio { Fixo, Uptime }
+
+    public enum AcaoTick { Nada, Agendar45s, MostrarPopup, MostrarCountdown }
+
+    public class EstadoTick
+    {
+        public ModoReinicio Modo;
+        public DateTime Agora;
+        public TimeSpan Uptime;
+        public TimeSpan Horario;         // RestartTime (modo fixo)
+        public TimeSpan Folga;           // SatisfiedHours (modo fixo)
+        public TimeSpan Limite;          // UptimeHours (modo uptime)
+        public DateTime? AgendadoAte;    // snooze ou catch-up pendente
+        public TimeSpan? UptimeAnterior; // uptime no tick anterior (modo uptime)
+        public int OkCount;              // adiamentos do ciclo atual
+        public bool ForceEnabled;
+        public int MaxOk;
+        public bool OpenForm;
+        public bool Disabled;
+    }
+
+    public class ResultadoTick
+    {
+        public AcaoTick Acao;
+        public DateTime? NovoAgendadoAte;
+    }
+
+    // Toda a decisão do agendador vive aqui, como funções puras de
+    // (agora, uptime, configuração). O ciclo é DERIVADO, não persistido:
+    // apenas um boot novo (uptime zerado) encerra um ciclo em andamento,
+    // mesmo após crash, saída ou relançamento do processo.
+    public static class Cronologia
+    {
+        public static readonly TimeSpan AtrasoCatchup = TimeSpan.FromSeconds(45);
+        public static readonly TimeSpan JanelaSlotAoVivo = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan GapSuspensao = TimeSpan.FromSeconds(60);
+
+        public static TimeSpan UptimeAgora()
+        {
+            return TimeSpan.FromMilliseconds((double)Program.GetTickCount64());
+        }
+
+        // Slot diário mais recente até agora (<= agora).
+        public static DateTime SlotMaisRecente(DateTime agora, TimeSpan horario)
+        {
+            DateTime hoje = agora.Date.Add(horario);
+            return agora >= hoje ? hoje : hoje.AddDays(-1);
+        }
+
+        // Uptime que a máquina tinha no instante do slot (<= 0 se bootou depois).
+        public static TimeSpan UptimeNoSlot(TimeSpan uptime, DateTime agora, DateTime slot)
+        {
+            return uptime - (agora - slot);
+        }
+
+        // Regra do modo fixo: elegível no slot S  <=>  boot <= S - folga.
+        // Avaliada SOMENTE no slot: nunca dispara por uptime completando fora
+        // dele (fim da deriva do "boot + 20 h").
+        public static bool ElegivelNoSlotFixo(TimeSpan uptime, DateTime agora, TimeSpan horario, TimeSpan folga)
+        {
+            return UptimeNoSlot(uptime, agora, SlotMaisRecente(agora, horario)) >= folga;
+        }
+
+        public static bool VencidoPorUptime(TimeSpan uptime, TimeSpan limite)
+        {
+            return uptime >= limite;
+        }
+
+        public static bool BootouRecentemente(TimeSpan uptime, TimeSpan janela)
+        {
+            return uptime < janela;
+        }
+
+        public static bool CicloDerivado(EstadoTick st)
+        {
+            if (st.Modo == ModoReinicio.Uptime)
+                return VencidoPorUptime(st.Uptime, st.Limite);
+            return ElegivelNoSlotFixo(st.Uptime, st.Agora, st.Horario, st.Folga);
+        }
+
+        // Decisão completa de um tick. Ordem: desativado/janela aberta ->
+        // ciclo derivado -> agendamento pendente (snooze/catch-up) ->
+        // primeira observação ("ao vivo" dispara já; "perdida" agenda 45 s).
+        public static ResultadoTick Avaliar(EstadoTick st)
+        {
+            ResultadoTick r = new ResultadoTick();
+            // Por padrao o agendamento pendente e' PRESERVADO (o adaptador
+            // grava r.NovoAgendadoAte mesmo quando a acao e' Nada).
+            r.NovoAgendadoAte = st.AgendadoAte;
+            if (st.Disabled || st.OpenForm) { r.Acao = AcaoTick.Nada; return r; }
+            if (!CicloDerivado(st)) { r.Acao = AcaoTick.Nada; return r; }
+
+            if (st.AgendadoAte.HasValue)
+            {
+                if (st.Agora < st.AgendadoAte.Value) { r.Acao = AcaoTick.Nada; return r; }
+                // Snooze ou catch-up venceu: dispara agora.
+                r.NovoAgendadoAte = null;
+                r.Acao = (st.ForceEnabled && st.OkCount >= st.MaxOk)
+                    ? AcaoTick.MostrarCountdown : AcaoTick.MostrarPopup;
+                return r;
+            }
+
+            bool aoVivo;
+            if (st.Modo == ModoReinicio.Uptime)
+            {
+                // "Ao vivo" = o tick anterior ainda estava abaixo do limite e não
+                // houve salto grande de uptime (salto = máquina suspensa).
+                aoVivo = st.UptimeAnterior.HasValue &&
+                         st.UptimeAnterior.Value < st.Limite &&
+                         (st.Uptime - st.UptimeAnterior.Value) <= GapSuspensao;
+            }
+            else
+            {
+                aoVivo = (st.Agora - SlotMaisRecente(st.Agora, st.Horario)) <= JanelaSlotAoVivo;
+            }
+
+            if (aoVivo)
+            {
+                r.Acao = (st.ForceEnabled && st.OkCount >= st.MaxOk)
+                    ? AcaoTick.MostrarCountdown : AcaoTick.MostrarPopup;
+            }
+            else
+            {
+                // O slot/vencimento elegível foi perdido com o app fechado ou
+                // suspenso: catch-up em ~45 s (uma única vez).
+                r.Acao = AcaoTick.Agendar45s;
+                r.NovoAgendadoAte = st.Agora + AtrasoCatchup;
+            }
+            return r;
+        }
+    }
+
+    // ------------------------ janelas: foco e topmost ------------------------
+    internal static class Win32Janela
+    {
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr depois, int x, int y, int cx, int cy, uint flags);
+
+        private static readonly IntPtr HwndTopmost = new IntPtr(-1);
+        private const uint SwpNoMove = 0x0002;
+        private const uint SwpNoSize = 0x0001;
+        private const uint SwpNoActivate = 0x0010;
+
+        // Única tentativa de foco (na abertura). O Windows pode recusar
+        // (processo em segundo plano); o pop-up continua topmost e visível.
+        public static void TentarFoco(IntPtr hWnd)
+        {
+            try { SetForegroundWindow(hWnd); } catch { }
+        }
+
+        // Reafirma somente a ordem-z (grupo topmost), nunca rouba foco.
+        public static void ReafirmarTopmost(IntPtr hWnd)
+        {
+            try { SetWindowPos(hWnd, HwndTopmost, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoActivate); } catch { }
+        }
+    }
+
+    // ------------------------- testes determinísticos -----------------------
+    // Roda via --selftest, sempre em diretorio temporário isolado.
+    public static class SelfTest
+    {
+        private static List<string> _falhas = new List<string>();
+        private static int _total;
+
+        private static void Check(bool cond, string nome)
+        {
+            _total++;
+            if (!cond) _falhas.Add(nome);
+        }
+
+        public static List<string> Executar()
+        {
+            // ---------- T1: limites N-1 / N / N+1 ----------
+            DateTime agora = new DateTime(2026, 8, 19, 14, 0, 0);
+            TimeSpan horario = agora.TimeOfDay;   // slot == agora
+            TimeSpan folga = TimeSpan.FromHours(20);
+            Check(!Cronologia.ElegivelNoSlotFixo(TimeSpan.FromHours(19) + TimeSpan.FromMinutes(59), agora, horario, folga), "T1 fixo 19h59 inelegível");
+            Check(Cronologia.ElegivelNoSlotFixo(TimeSpan.FromHours(20), agora, horario, folga), "T1 fixo 20h00 elegível");
+            Check(Cronologia.ElegivelNoSlotFixo(TimeSpan.FromHours(20) + TimeSpan.FromMinutes(1), agora, horario, folga), "T1 fixo 20h01 elegível");
+            TimeSpan limite = TimeSpan.FromHours(24);
+            Check(!Cronologia.VencidoPorUptime(TimeSpan.FromHours(23) + TimeSpan.FromMinutes(59), limite), "T1 uptime 23h59");
+            Check(Cronologia.VencidoPorUptime(TimeSpan.FromHours(24), limite), "T1 uptime 24h00");
+            Check(Cronologia.VencidoPorUptime(TimeSpan.FromHours(24) + TimeSpan.FromMinutes(1), limite), "T1 uptime 24h01");
+
+            // ---------- T2: modo fixo (F1-F7) ----------
+            // 16/08=sáb 17=seg 18=ter 19=qua 20=qui 21=sex
+            Check(AvaliarFixo(new DateTime(2026, 8, 18, 2, 0, 10), TimeSpan.FromHours(25) + TimeSpan.FromSeconds(10)) == AcaoTick.MostrarPopup,
+                "F1 boot antes do slot, uptime suficiente: dispara no slot");
+            Check(AvaliarFixo(new DateTime(2026, 8, 18, 6, 0, 0), TimeSpan.FromHours(20)) == AcaoTick.Nada,
+                "F2 boot seg 10h: NÃO dispara ao completar 20h (era a deriva)");
+            Check(AvaliarFixo(new DateTime(2026, 8, 20, 2, 0, 10), TimeSpan.FromHours(40) + TimeSpan.FromSeconds(10)) == AcaoTick.MostrarPopup,
+                "F2 dispara no slot do dia seguinte (40h)");
+            Check(AvaliarFixo(new DateTime(2026, 8, 18, 9, 0, 0), TimeSpan.FromHours(1)) == AcaoTick.Nada,
+                "F3 boot depois do slot: sem catch-up no dia");
+            Check(AvaliarFixo(new DateTime(2026, 8, 18, 9, 0, 0), TimeSpan.FromHours(49)) == AcaoTick.Agendar45s,
+                "F4 app iniciado após slot elegível perdido: catch-up 45s");
+            Check(AvaliarFixo(new DateTime(2026, 8, 18, 9, 0, 0), TimeSpan.FromHours(11)) == AcaoTick.Nada,
+                "F5 app iniciado após slot inelegível: nada");
+            Check(AvaliarFixoAgendado(new DateTime(2026, 8, 20, 23, 57, 0), TimeSpan.FromHours(60), new DateTime(2026, 8, 21, 0, 0, 0)) == AcaoTick.Nada,
+                "F6a snooze futuro atravessando meia-noite: espera");
+            Check(AvaliarFixoAgendado(new DateTime(2026, 8, 21, 0, 0, 5), TimeSpan.FromHours(60), new DateTime(2026, 8, 21, 0, 0, 0)) == AcaoTick.MostrarPopup,
+                "F6b meia-noite não cancela o ciclo/snooze");
+            Check(AvaliarFixo(new DateTime(2026, 8, 20, 2, 0, 10), TimeSpan.FromHours(23) + TimeSpan.FromMinutes(50) + TimeSpan.FromSeconds(10)) == AcaoTick.MostrarPopup,
+                "F7 reinício ao aviso 02:10 -> próximo disparo 02:00 (sem deriva)");
+
+            // ---------- T3: modo uptime (U1-U5) ----------
+            Check(AvaliarUptime(TimeSpan.FromHours(23) + TimeSpan.FromMinutes(59), null, null, 24) == AcaoTick.Nada, "U1 abaixo do limite");
+            Check(AvaliarUptime(TimeSpan.FromHours(24), TimeSpan.FromHours(23) + TimeSpan.FromMinutes(59), null, 24) == AcaoTick.MostrarPopup, "U1 vencimento ao vivo: dispara já");
+            Check(AvaliarUptime(TimeSpan.FromHours(24), null, null, 24) == AcaoTick.Agendar45s, "U4 relançamento no mesmo boot já vencido: catch-up");
+            Check(AvaliarUptime(TimeSpan.FromHours(34), TimeSpan.FromHours(20), null, 24) == AcaoTick.Agendar45s, "U3 acordou de suspensão já vencido: catch-up");
+            Check(AvaliarUptime(TimeSpan.FromHours(30), TimeSpan.FromHours(25), new DateTime(2026, 8, 21, 12, 5, 0), 24, new DateTime(2026, 8, 21, 12, 3, 0)) == AcaoTick.Nada, "U1b snooze pendente: espera");
+            Check(AvaliarUptime(TimeSpan.FromHours(30), TimeSpan.FromHours(25), new DateTime(2026, 8, 21, 12, 5, 0), 24, new DateTime(2026, 8, 21, 12, 6, 0)) == AcaoTick.MostrarPopup, "U1c snooze venceu: volta");
+            Check(AvaliarUptime(TimeSpan.FromHours(30), TimeSpan.FromHours(25), null, 48) == AcaoTick.Nada, "U5 limite alterado 24->48: re-deriva e aguarda");
+
+            EstadoTick aberto = EstadoUptime(TimeSpan.FromHours(30), TimeSpan.FromHours(25), null, 24);
+            aberto.OpenForm = true;
+            Check(Cronologia.Avaliar(aberto).Acao == AcaoTick.Nada, "T3 popup aberto: não decide");
+            EstadoTick desativado = EstadoUptime(TimeSpan.FromHours(30), TimeSpan.FromHours(25), null, 24);
+            desativado.Disabled = true;
+            Check(Cronologia.Avaliar(desativado).Acao == AcaoTick.Nada, "T3 DesativarAviso: suprime");
+
+            // Regressão do "snooze apagado": caminhos Nada DEVEM preservar o
+            // agendamento pendente em NovoAgendadoAte (o adaptador o grava).
+            EstadoTick espera = EstadoUptime(TimeSpan.FromHours(30), TimeSpan.FromHours(25),
+                new DateTime(2026, 8, 21, 12, 5, 0), 24);
+            espera.Agora = new DateTime(2026, 8, 21, 12, 4, 0);
+            ResultadoTick rtEspera = Cronologia.Avaliar(espera);
+            Check(rtEspera.Acao == AcaoTick.Nada && rtEspera.NovoAgendadoAte == espera.AgendadoAte,
+                "T3b snooze futuro preservado em NovoAgendadoAte");
+            EstadoTick desativado2 = EstadoFixo(new DateTime(2026, 8, 21, 12, 4, 0), TimeSpan.FromHours(40));
+            desativado2.Disabled = true;
+            desativado2.AgendadoAte = new DateTime(2026, 8, 21, 12, 5, 0);
+            ResultadoTick rtDesat = Cronologia.Avaliar(desativado2);
+            Check(rtDesat.Acao == AcaoTick.Nada && rtDesat.NovoAgendadoAte == desativado2.AgendadoAte,
+                "T3b desativado preserva agendamento pendente");
+
+            // ---------- T4: migração e validação de config ----------
+            File.WriteAllText(Program.ConfigPath,
+                "# config antigo (sem chaves novas)\r\nRestartTime=02:00\r\nSnoozeMinutes=5\r\n");
+            ReminderConfig c1 = ReminderConfig.Load();
+            Check(c1.Modo == ModoReinicio.Fixo && c1.UptimeHours == 24 && c1.SatisfiedHours == 20, "T4 INI antigo -> padrões (fixo/24/20)");
+            Check(c1.AutoUpdate, "T4 INI sem AutoUpdate -> novo padrão ligado");
+            File.WriteAllText(Program.ConfigPath, "RestartMode=xyz\r\n");
+            ReminderConfig c2 = ReminderConfig.Load();
+            Check(c2.Modo == ModoReinicio.Fixo, "T4 RestartMode inválido -> fixo");
+            File.WriteAllText(Program.ConfigPath, "RestartMode=Uptime\r\nUptimeHours=999\r\nSatisfiedHours=0\r\n");
+            ReminderConfig c3 = ReminderConfig.Load();
+            Check(c3.Modo == ModoReinicio.Uptime && c3.UptimeHours == 96 && c3.SatisfiedHours == 1, "T4 clamps (96/1)");
+            File.WriteAllText(Program.ConfigPath, "RestartTime=lixo\r\n");
+            ReminderConfig c4 = ReminderConfig.Load();
+            Check(c4.RestartTime == new TimeSpan(2, 0, 0), "T4 RestartTime inválido -> 02:00");
+
+            // ---------- T6: auto-update (equivalência com a condição antiga) ----------
+            TimeSpan[] idades = new TimeSpan[] {
+                TimeSpan.FromMinutes(10),
+                TimeSpan.FromMinutes(29) + TimeSpan.FromSeconds(59),
+                TimeSpan.FromMinutes(30),
+                TimeSpan.FromMinutes(31),
+                TimeSpan.FromHours(19),
+                TimeSpan.FromHours(20),
+                TimeSpan.FromHours(25) };
+            foreach (TimeSpan idade in idades)
+            {
+                bool antiga = idade < TimeSpan.FromHours(20) && idade < TimeSpan.FromMinutes(30);
+                Check(antiga == Cronologia.BootouRecentemente(idade, TimeSpan.FromMinutes(30)),
+                    "T6 equivalência auto-update (" + idade + ")");
+            }
+
+            // ---------- T5: selftest não gera eventos de produção ----------
+            if (File.Exists(Program.LogPath))
+            {
+                foreach (string linha in File.ReadAllLines(Program.LogPath))
+                    Check(!(linha.Contains("Aviso exibido") || linha.Contains("Adiado")),
+                        "T5 nenhum evento de produção no selftest");
+            }
+
+            Program.LogErro("selftest: " + (_total - _falhas.Count) + "/" + _total + " verificações OK");
+            return _falhas;
+        }
+
+        private static EstadoTick EstadoFixo(DateTime agora, TimeSpan uptime)
+        {
+            EstadoTick st = new EstadoTick();
+            st.Modo = ModoReinicio.Fixo;
+            st.Agora = agora;
+            st.Uptime = uptime;
+            st.Horario = new TimeSpan(2, 0, 0);
+            st.Folga = TimeSpan.FromHours(20);
+            st.MaxOk = 10;
+            return st;
+        }
+
+        private static AcaoTick AvaliarFixo(DateTime agora, TimeSpan uptime)
+        {
+            return Cronologia.Avaliar(EstadoFixo(agora, uptime)).Acao;
+        }
+
+        private static AcaoTick AvaliarFixoAgendado(DateTime agora, TimeSpan uptime, DateTime agendadoAte)
+        {
+            EstadoTick st = EstadoFixo(agora, uptime);
+            st.AgendadoAte = agendadoAte;
+            return Cronologia.Avaliar(st).Acao;
+        }
+
+        private static EstadoTick EstadoUptime(TimeSpan uptime, TimeSpan? uptimeAnterior, DateTime? agendadoAte, int limiteHoras)
+        {
+            EstadoTick st = new EstadoTick();
+            st.Modo = ModoReinicio.Uptime;
+            st.Agora = new DateTime(2026, 8, 21, 12, 0, 0);
+            st.Uptime = uptime;
+            st.UptimeAnterior = uptimeAnterior;
+            st.AgendadoAte = agendadoAte;
+            st.Limite = TimeSpan.FromHours(limiteHoras);
+            st.MaxOk = 10;
+            return st;
+        }
+
+        private static AcaoTick AvaliarUptime(TimeSpan uptime, TimeSpan? uptimeAnterior, DateTime? agendadoAte, int limiteHoras)
+        {
+            return Cronologia.Avaliar(EstadoUptime(uptime, uptimeAnterior, agendadoAte, limiteHoras)).Acao;
+        }
+
+        private static AcaoTick AvaliarUptime(TimeSpan uptime, TimeSpan? uptimeAnterior, DateTime? agendadoAte, int limiteHoras, DateTime agora)
+        {
+            EstadoTick st = EstadoUptime(uptime, uptimeAnterior, agendadoAte, limiteHoras);
+            st.Agora = agora;
+            return Cronologia.Avaliar(st).Acao;
+        }
+    }
+
     // -------------------- eventos do log (nomes simples) ---------------------
     public static class Eventos
     {
         public const string AvisoExibido = "Aviso exibido";
         public const string AdiadoOk = "Adiado (OK)";
         public const string AdiadoAutomatico = "Adiado (automático)";
+        public const string AdiadoJanelaFechada = "Adiado (janela fechada)";
         public const string ReinicioSolicitado = "Reinício solicitado";
         public const string FalhaAoReiniciar = "Falha ao reiniciar";
         public const string ComputadorReiniciado = "Computador reiniciado";
@@ -303,16 +655,18 @@ namespace AvisoDeReinicio
     public class ReminderConfig
     {
         public TimeSpan RestartTime = new TimeSpan(2, 0, 0);   // padrao 02:00
+        public ModoReinicio Modo = ModoReinicio.Fixo;          // fixo | uptime
+        public int UptimeHours = 24;                           // modo uptime: ciclo em horas
         public int SnoozeMinutes = 5;                          // pop-up volta apos X min
         public bool ForceEnabled = false;                      // forca reinicio automatico
-        public int MaxOkBeforeForce = 10;                      // apos X "OK" no mesmo dia
+        public int MaxOkBeforeForce = 10;                      // apos X "OK" no mesmo ciclo
         public int PopupTimeoutMinutes = 15;                   // sem clique, adia sozinho
         public int SatisfiedHours = 20;                        // boot recente = ja satisfeito
         public string SenhaHash = "";                          // vazio = senha desligada
         public string SenhaSalt = "";
         public bool ProtegerSair = true;
         public bool ProtegerLimparLog = true;
-        public bool AutoUpdate = false;                        // padrao: avisar, nao instalar
+        public bool AutoUpdate = true;                         // padrao: instalar apos boot recente
 
         public static ReminderConfig Load()
         {
@@ -335,6 +689,16 @@ namespace AvisoDeReinicio
                         {
                             case "restarttime":
                                 if (TimeSpan.TryParse(val, CultureInfo.InvariantCulture, out ts)) c.RestartTime = ts;
+                                break;
+                            case "restartmode":
+                                string mv = val.ToLowerInvariant();
+                                if (mv == "uptime") c.Modo = ModoReinicio.Uptime;
+                                else if (mv == "fixo") c.Modo = ModoReinicio.Fixo;
+                                else if (val.Length > 0)
+                                    Program.LogErro("config: RestartMode inválido ('" + val + "'), usando fixo");
+                                break;
+                            case "uptimehours":
+                                if (int.TryParse(val, out n)) c.UptimeHours = Math.Max(1, Math.Min(96, n));
                                 break;
                             case "snoozeminutes":
                                 if (int.TryParse(val, out n)) c.SnoozeMinutes = Math.Max(1, Math.Min(120, n));
@@ -381,6 +745,8 @@ namespace AvisoDeReinicio
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("# Configuracao do AvisoDeReinicio");
                 sb.AppendLine("RestartTime=" + RestartTime.ToString(@"hh\:mm"));
+                sb.AppendLine("RestartMode=" + (Modo == ModoReinicio.Uptime ? "uptime" : "fixo"));
+                sb.AppendLine("UptimeHours=" + UptimeHours);
                 sb.AppendLine("SnoozeMinutes=" + SnoozeMinutes);
                 sb.AppendLine("ForceEnabled=" + (ForceEnabled ? "1" : "0"));
                 sb.AppendLine("MaxOkBeforeForce=" + MaxOkBeforeForce);
@@ -746,8 +1112,10 @@ namespace AvisoDeReinicio
         private NotifyIcon _tray;
         private System.Windows.Forms.Timer _timer;
         private ReminderConfig _cfg;
-        private DateTime _nextPopup;
-        private DateTime _lastDay;
+        private DateTime? _agendadoAte;     // snooze ou catch-up pendente
+        private TimeSpan? _uptimeAnterior;  // uptime no tick anterior
+        private int _okCount;               // adiamentos do ciclo atual
+        private DateTime _guardShutdownAte = DateTime.MinValue;  // janela do shutdown.exe
         private Form _openForm;              // pop-up/countdown/config aberto
         private ConfigForm _configForm;      // uma unica tela de configuracoes
         private bool _forceDemo;
@@ -828,19 +1196,11 @@ namespace AvisoDeReinicio
                 Program.LogErro("bandeja: " + ex.Message);
             }
 
-            RecomputeNextPopup();
-            _lastDay = DateTime.Today;
-            if (Environment.GetCommandLineArgs().Length > 1 &&
-                string.Equals(Environment.GetCommandLineArgs()[1], "--demo", StringComparison.OrdinalIgnoreCase))
+            string[] args = Environment.GetCommandLineArgs();
+            foreach (string a in args)
             {
-                _forceDemo = true;
-            }
-
-            // Flag de desenvolvimento: abre direto a tela de configuracoes
-            if (Environment.GetCommandLineArgs().Length > 1 &&
-                string.Equals(Environment.GetCommandLineArgs()[1], "--config", StringComparison.OrdinalIgnoreCase))
-            {
-                ShowConfig();
+                if (string.Equals(a, "--demo", StringComparison.OrdinalIgnoreCase)) _forceDemo = true;
+                if (string.Equals(a, "--config", StringComparison.OrdinalIgnoreCase)) ShowConfig();
             }
 
             LoadLastCheckDay();
@@ -852,6 +1212,9 @@ namespace AvisoDeReinicio
         }
 
         // --------------------------- logica do lembrete -----------------------
+        // O agendador inteiro delega para Cronologia.Avaliar (funcao pura).
+        // O ciclo e derivado de (agora, uptime, config): so um boot novo o
+        // encerra. Meia-noite nao cancela ciclo, snooze ou contadores.
         private void OnTimerTick(object sender, EventArgs e)
         {
             try
@@ -869,29 +1232,55 @@ namespace AvisoDeReinicio
                         Program.Log(Eventos.AvisosReativados, "arquivo DesativarAviso.txt removido");
                 }
 
-                if (_openForm != null) return;       // ja tem aviso na tela
-                if (_disabled) return;               // maquina isenta
+                TimeSpan uptime = Cronologia.UptimeAgora();
+
+                if (_openForm != null) { _uptimeAnterior = uptime; return; }   // ja tem aviso na tela
+                if (_disabled) { _uptimeAnterior = uptime; return; }           // maquina isenta
                 // flag de teste/desenvolvimento: dispara o pop-up na 1a checagem
                 if (_forceDemo)
                 {
                     _forceDemo = false;
-                    ShowPopup(true);
+                    ShowPopupTeste();
+                    _uptimeAnterior = uptime;
                     return;
                 }
+                // Janela de 10 s do shutdown.exe: nao reabrir pop-up fantasma.
+                if (DateTime.Now < _guardShutdownAte) { _uptimeAnterior = uptime; return; }
 
-                if (DateTime.Today != _lastDay)
-                {
-                    _lastDay = DateTime.Today;
-                    RecomputeNextPopup();
-                }
+                EstadoTick st = new EstadoTick();
+                st.Modo = _cfg.Modo;
+                st.Agora = DateTime.Now;
+                st.Uptime = uptime;
+                st.UptimeAnterior = _uptimeAnterior;
+                st.Horario = _cfg.RestartTime;
+                st.Folga = TimeSpan.FromHours(Math.Max(1, Math.Min(48, _cfg.SatisfiedHours)));
+                st.Limite = TimeSpan.FromHours(Math.Max(1, Math.Min(96, _cfg.UptimeHours)));
+                st.AgendadoAte = _agendadoAte;
+                st.OkCount = _okCount;
+                st.ForceEnabled = _cfg.ForceEnabled;
+                st.MaxOk = Math.Max(1, _cfg.MaxOkBeforeForce);
+                st.OpenForm = (_openForm != null);
+                st.Disabled = _disabled;
 
-                if (DateTime.Now >= _nextPopup && !SatisfiedToday())
+                _uptimeAnterior = uptime;
+                ResultadoTick r = Cronologia.Avaliar(st);
+
+                switch (r.Acao)
                 {
-                    int oks = LogReader.CountToday(Eventos.AdiadoOk);
-                    if (_cfg.ForceEnabled && oks >= _cfg.MaxOkBeforeForce)
+                    case AcaoTick.Agendar45s:
+                        _agendadoAte = r.NovoAgendadoAte;
+                        break;
+                    case AcaoTick.MostrarPopup:
+                        _agendadoAte = null;
+                        ShowPopup();
+                        break;
+                    case AcaoTick.MostrarCountdown:
+                        _agendadoAte = null;
                         ShowCountdown();
-                    else
-                        ShowPopup(false);
+                        break;
+                    default:
+                        _agendadoAte = r.NovoAgendadoAte;
+                        break;
                 }
             }
             catch (Exception ex)
@@ -900,39 +1289,32 @@ namespace AvisoDeReinicio
             }
         }
 
-        // Considera satisfeito se o PC bootou nas ultimas N horas (padrao 20).
-        // Janela deslizante: nao quebra perto da meia-noite nem com loja que
-        // fecha 22:00 e horario preferencial 02:00.
-        private bool SatisfiedToday()
-        {
-            int hours = Math.Max(1, Math.Min(48, _cfg.SatisfiedHours));
-            return Program.LastBoot() >= DateTime.Now.AddHours(-hours);
-        }
-
-        private void RecomputeNextPopup()
-        {
-            DateTime sched = DateTime.Today.Add(_cfg.RestartTime);
-            if (DateTime.Now >= sched && !SatisfiedToday())
-                _nextPopup = DateTime.Now.AddSeconds(45);   // PC ligou depois da hora: avisa em seguida
-            else
-                _nextPopup = sched;
-        }
-
-        private void ShowPopup(bool isTest)
+        private void ShowPopup()
         {
             if (_openForm != null) return;
-            PopupForm f = new PopupForm(_cfg);
+            PopupForm f = new PopupForm(_cfg, false, _okCount);
             f.RestartRequested += DoRestartManual;
             f.SnoozeRequested += OnSnooze;
             f.AutoSnoozeRequested += OnAutoSnooze;
+            f.CloseSnoozeRequested += OnCloseSnooze;
             _openForm = f;
             f.FormClosed += delegate { _openForm = null; };
-            string detPopup = isTest
-                ? "aviso de teste"
-                : (LogReader.CountToday(Eventos.AvisoExibido) + 1) + "º aviso do dia";
-            Program.Log(Eventos.AvisoExibido, detPopup);
+            Program.Log(Eventos.AvisoExibido,
+                (LogReader.CountToday(Eventos.AvisoExibido) + 1) + "º aviso do dia");
             f.Show();
-            f.Activate();
+        }
+
+        // Pop-up de teste ("Testar agora" / --demo): isolado do agendador.
+        // Nao inicia ciclo, nao agenda snooze, nao grava eventos de producao
+        // e nunca provoca contagem regressiva.
+        private void ShowPopupTeste()
+        {
+            if (_openForm != null) return;
+            PopupForm f = new PopupForm(_cfg, true, 0);
+            _openForm = f;
+            f.FormClosed += delegate { _openForm = null; };
+            Program.Log("Teste automático", "pop-up de teste exibido");
+            f.Show();
         }
 
         private void ShowCountdown()
@@ -941,32 +1323,37 @@ namespace AvisoDeReinicio
             CountdownForm f = new CountdownForm(_cfg);
             f.RestartRequested += DoRestartForced;
             f.SnoozeRequested += OnSnooze;
+            f.CloseSnoozeRequested += OnCloseSnooze;
             _openForm = f;
             f.FormClosed += delegate { _openForm = null; };
             Program.Log(Eventos.ContagemRegressiva, "reinício automático em 60 s");
             f.Show();
-            f.Activate();
         }
 
         private void DoRestartManual() { DoRestart(false); }
         private void DoRestartForced(bool forced) { DoRestart(forced); }
 
-        private int ScheduleNextPopup()
+        private void ScheduleSnooze()
         {
-            int sn = Math.Max(1, _cfg.SnoozeMinutes);
-            _nextPopup = DateTime.Now.AddMinutes(sn);
-            return sn;
+            _agendadoAte = DateTime.Now.AddMinutes(Math.Max(1, _cfg.SnoozeMinutes));
         }
 
-        private void OnSnooze()
+        private void OnSnooze()                      // botao OK / "Adiar" da contagem
         {
-            int sn = ScheduleNextPopup();
-            Program.Log(Eventos.AdiadoOk, "próximo aviso em " + sn + " min");
+            _okCount++;
+            ScheduleSnooze();
+            Program.Log(Eventos.AdiadoOk, "próximo aviso em " + Math.Max(1, _cfg.SnoozeMinutes) + " min");
         }
 
-        private void OnAutoSnooze()
+        private void OnAutoSnooze()                  // timeout sem interacao (nao conta para a forca)
         {
-            ScheduleNextPopup();
+            ScheduleSnooze();
+        }
+
+        private void OnCloseSnooze()                 // Alt+F4: o formulario ja registrou o log
+        {
+            _okCount++;
+            ScheduleSnooze();
         }
 
         private void DoRestart(bool forced)
@@ -1024,7 +1411,8 @@ namespace AvisoDeReinicio
                 }
                 Program.Log(Eventos.ReinicioSolicitado, fallback ? origem + " (fallback)" : origem);
                 // Evita pop-up fantasma na janela de 10 s do shutdown.exe.
-                _nextPopup = DateTime.Now.AddMinutes(3);
+                _guardShutdownAte = DateTime.Now.AddMinutes(3);
+                _agendadoAte = null;
                 return true;
             }
             catch (Exception ex)
@@ -1106,9 +1494,11 @@ namespace AvisoDeReinicio
             }
             catch { }
 
-            // Auto-instala so com AutoUpdate=1 e logo apos o reinicio diario.
-            if (_cfg.AutoUpdate && SatisfiedToday() &&
-                (DateTime.Now - Program.LastBoot()).TotalMinutes < 30)
+            // Auto-instala so com AutoUpdate=1 e logo apos um boot recente.
+            // Equivalente a condicao antiga (SatisfiedToday && <30 min), que ja
+            // era dominada pelos 30 minutos.
+            if (_cfg.AutoUpdate && Cronologia.BootouRecentemente(
+                    Cronologia.UptimeAgora(), TimeSpan.FromMinutes(30)))
                 ApplyUpdate(info);
         }
 
@@ -1145,7 +1535,7 @@ namespace AvisoDeReinicio
 
         private void OnOpenConfig(object sender, EventArgs e) { ShowConfig(); }
 
-        private void OnTestPopup(object sender, EventArgs e) { ShowPopup(true); }
+        private void OnTestPopup(object sender, EventArgs e) { ShowPopupTeste(); }
 
         private void OnOpenFolder(object sender, EventArgs e)
         {
@@ -1191,7 +1581,11 @@ namespace AvisoDeReinicio
         private void OnConfigSaved()
         {
             _cfg = ReminderConfig.Load();
-            RecomputeNextPopup();
+            // Re-deriva o ciclo do zero com a configuracao nova (inclusive
+            // troca de modo fixo <-> uptime).
+            _agendadoAte = null;
+            _uptimeAnterior = null;
+            _okCount = 0;
         }
     }    // ------------------------- pop-up de reinicio ----------------------------
     public class PopupForm : Form
@@ -1199,14 +1593,17 @@ namespace AvisoDeReinicio
         public event Action RestartRequested;
         public event Action SnoozeRequested;
         public event Action AutoSnoozeRequested;
+        public event Action CloseSnoozeRequested;    // fechado pelo usuario sem decisao
         private bool _done;
+        private bool _teste;
         private System.Windows.Forms.Timer _watch;
         private DateTime _shownAt;
         private int _timeoutMin;
         private int _snoozeMin;
 
-        public PopupForm(ReminderConfig cfg)
+        public PopupForm(ReminderConfig cfg, bool teste, int adiamentosCiclo)
         {
+            _teste = teste;
             TopMost = true;
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -1232,12 +1629,14 @@ namespace AvisoDeReinicio
             corpo.Text =
                 "Este computador deve ser reiniciado diariamente para manter o sistema do caixa estável.\n\n" +
                 "Último reinício: " + Program.Fmt(boot) + "  (" + UptimeText(boot) + ")\n" +
-                "Horário preferencial configurado: " + cfg.RestartTime.ToString(@"hh\:mm");
+                (cfg.Modo == ModoReinicio.Uptime
+                    ? "Ciclo configurado: avisar após " + cfg.UptimeHours + " h ligado"
+                    : "Aviso diário configurado às " + cfg.RestartTime.ToString(@"hh\:mm"));
             corpo.Font = new Font("Segoe UI", 10F);
             corpo.SetBounds(16, 48, 450, 100);
 
             Label adiamentos = new Label();
-            adiamentos.Text = "Você já adiou " + LogReader.CountToday(Eventos.AdiadoOk) + " vez(es) hoje.";
+            adiamentos.Text = "Você já adiou " + adiamentosCiclo + " vez(es) neste ciclo.";
             adiamentos.Font = new Font("Segoe UI", 9F, FontStyle.Italic);
             adiamentos.ForeColor = Color.Gray;
             adiamentos.SetBounds(16, 156, 450, 24);
@@ -1249,7 +1648,17 @@ namespace AvisoDeReinicio
             btnReiniciar.ForeColor = Color.White;
             btnReiniciar.FlatStyle = FlatStyle.Flat;
             btnReiniciar.SetBounds(16, 196, 190, 38);
-            btnReiniciar.Click += delegate { Finish(true); };
+            btnReiniciar.Click += delegate
+            {
+                if (_teste)
+                {
+                    MessageBox.Show(this,
+                        "Este é um pop-up de teste — o computador não será reiniciado.",
+                        "Aviso de Reinício", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                Finish(true);
+            };
 
             Button btnOk = new Button();
             btnOk.Text = "OK, adiar por " + cfg.SnoozeMinutes + " min";
@@ -1267,8 +1676,10 @@ namespace AvisoDeReinicio
             Shown += delegate
             {
                 try { System.Media.SystemSounds.Exclamation.Play(); } catch { }
-                Activate();
-                BringToFront();
+                // Unica tentativa de foco; o Windows pode recusar. Depois disso
+                // so reafirmamos a ordem-z, nunca mais o foco.
+                Win32Janela.TentarFoco(Handle);
+                Win32Janela.ReafirmarTopmost(Handle);
             };
 
             _watch = new System.Windows.Forms.Timer();
@@ -1283,13 +1694,8 @@ namespace AvisoDeReinicio
 
         private void OnWatchTick(object sender, EventArgs e)
         {
-            try
-            {
-                TopMost = true;
-                Activate();
-                BringToFront();
-            }
-            catch { }
+            // Reafirma apenas a ordem-z (grupo topmost), sem roubar foco.
+            if (IsHandleCreated) Win32Janela.ReafirmarTopmost(Handle);
 
             if ((DateTime.Now - _shownAt).TotalMinutes >= _timeoutMin)
                 FinishAuto();
@@ -1311,7 +1717,7 @@ namespace AvisoDeReinicio
             {
                 if (RestartRequested != null) RestartRequested();
             }
-            else
+            else if (!_teste)
             {
                 if (SnoozeRequested != null) SnoozeRequested();
             }
@@ -1323,10 +1729,34 @@ namespace AvisoDeReinicio
             if (_done) return;
             _done = true;
             try { if (_watch != null) _watch.Stop(); } catch { }
-            Program.Log(Eventos.AdiadoAutomatico,
-                "sem interação por " + _timeoutMin + " min · próximo aviso em " + _snoozeMin + " min");
-            if (AutoSnoozeRequested != null) AutoSnoozeRequested();
+            if (!_teste)
+            {
+                Program.Log(Eventos.AdiadoAutomatico,
+                    "sem interação por " + _timeoutMin + " min · próximo aviso em " + _snoozeMin + " min");
+                if (AutoSnoozeRequested != null) AutoSnoozeRequested();
+            }
             Close();
+        }
+
+        // Alt+F4 / fechamento pelo usuario sem decisao vira adiamento (exatamente
+        // um log e um snooze, protegidos por _done). Fechamentos por shutdown do
+        // Windows ou saida do aplicativo nao geram snooze. Sem Close() recursivo.
+        // TaskManagerClosing entra no caso "usuario": e' o que o WinForms entrega
+        // para WM_CLOSE externo (Alt+F4 simulado, "Finalizar tarefa" etc.).
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (!_done)
+            {
+                _done = true;
+                try { if (_watch != null) _watch.Stop(); } catch { }
+                if (!_teste && (e.CloseReason == CloseReason.UserClosing ||
+                                e.CloseReason == CloseReason.TaskManagerClosing))
+                {
+                    Program.Log(Eventos.AdiadoJanelaFechada, "pop-up fechado pelo usuário");
+                    if (CloseSnoozeRequested != null) CloseSnoozeRequested();
+                }
+            }
+            base.OnFormClosing(e);
         }
 
         protected override bool ShowWithoutActivation
@@ -1340,6 +1770,7 @@ namespace AvisoDeReinicio
     {
         public event Action<bool> RestartRequested;   // bool = forcado
         public event Action SnoozeRequested;
+        public event Action CloseSnoozeRequested;     // fechada pelo usuario sem decisao
         private System.Windows.Forms.Timer _t;
         private int _secondsLeft = 60;
         private bool _done;
@@ -1400,21 +1831,17 @@ namespace AvisoDeReinicio
             Shown += delegate
             {
                 try { System.Media.SystemSounds.Exclamation.Play(); } catch { }
-                Activate();
-                BringToFront();
+                // Unica tentativa de foco; depois so ordem-z, nunca mais foco.
+                Win32Janela.TentarFoco(Handle);
+                Win32Janela.ReafirmarTopmost(Handle);
             };
 
             _t = new System.Windows.Forms.Timer();
             _t.Interval = 1000;
             _t.Tick += delegate
             {
-                try
-                {
-                    TopMost = true;
-                    Activate();
-                    BringToFront();
-                }
-                catch { }
+                // Reafirma apenas a ordem-z (grupo topmost), sem roubar foco.
+                if (IsHandleCreated) Win32Janela.ReafirmarTopmost(Handle);
                 _secondsLeft--;
                 if (_secondsLeft <= 0)
                 {
@@ -1444,6 +1871,23 @@ namespace AvisoDeReinicio
             Close();
         }
 
+        // Alt+F4 durante a contagem vira adiamento (uma unica vez), como no pop-up.
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (!_done)
+            {
+                _done = true;
+                try { _t.Stop(); } catch { }
+                if (e.CloseReason == CloseReason.UserClosing ||
+                    e.CloseReason == CloseReason.TaskManagerClosing)
+                {
+                    Program.Log(Eventos.AdiadoJanelaFechada, "contagem regressiva fechada pelo usuário");
+                    if (CloseSnoozeRequested != null) CloseSnoozeRequested();
+                }
+            }
+            base.OnFormClosing(e);
+        }
+
         protected override bool ShowWithoutActivation
         {
             get { return false; }
@@ -1454,7 +1898,11 @@ namespace AvisoDeReinicio
         public event Action ConfigSaved;
 
         private ReminderConfig _cfg;
+        private RadioButton _radioFixo;
+        private RadioButton _radioUptime;
         private DateTimePicker _timePicker;
+        private NumericUpDown _folga;
+        private NumericUpDown _uptimeHoras;
         private NumericUpDown _snooze;
         private CheckBox _forceChk;
         private NumericUpDown _maxOk;
@@ -1471,32 +1919,74 @@ namespace AvisoDeReinicio
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(680, 640);
+            ClientSize = new Size(680, 720);
             Font = new Font("Segoe UI", 9F);
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
 
             int y = 12;
 
-            // --- horario preferencial ---
-            GroupBox gHorario = new GroupBox();
-            gHorario.Text = " Horário preferencial de reinício ";
-            gHorario.SetBounds(12, y, 320, 62);
-            Label l1 = new Label();
-            l1.Text = "Avisar diariamente às:";
-            l1.SetBounds(14, 26, 140, 20);
+            // --- quando avisar (modo) ---
+            GroupBox gQuando = new GroupBox();
+            gQuando.Text = " Quando avisar ";
+            gQuando.SetBounds(12, y, 656, 104);
+            _radioFixo = new RadioButton();
+            _radioFixo.Text = "Em horário fixo, todo dia";
+            _radioFixo.SetBounds(14, 22, 300, 22);
+            _radioFixo.Checked = (cfg.Modo != ModoReinicio.Uptime);
+            Label lt = new Label();
+            lt.Text = "Às:";
+            lt.SetBounds(36, 48, 30, 20);
             _timePicker = new DateTimePicker();
             _timePicker.Format = DateTimePickerFormat.Time;
             _timePicker.ShowUpDown = true;
             _timePicker.Value = DateTime.Today.Add(cfg.RestartTime);
-            _timePicker.SetBounds(160, 22, 90, 24);
-            gHorario.Controls.Add(l1);
-            gHorario.Controls.Add(_timePicker);
-            Controls.Add(gHorario);
+            _timePicker.SetBounds(70, 45, 80, 24);
+            Label lf = new Label();
+            lf.Text = "— não avisar se reiniciado há menos de";
+            lf.SetBounds(160, 48, 290, 20);
+            _folga = new NumericUpDown();
+            _folga.Minimum = 1;
+            _folga.Maximum = 48;
+            _folga.Value = Math.Max(1, Math.Min(48, cfg.SatisfiedHours));
+            _folga.SetBounds(455, 45, 50, 24);
+            Label lf2 = new Label();
+            lf2.Text = "h";
+            lf2.SetBounds(510, 48, 20, 20);
+            _radioUptime = new RadioButton();
+            _radioUptime.Text = "Quando estiver ligado há mais de";
+            _radioUptime.SetBounds(14, 74, 280, 22);
+            _uptimeHoras = new NumericUpDown();
+            _uptimeHoras.Minimum = 1;
+            _uptimeHoras.Maximum = 96;
+            _uptimeHoras.Value = Math.Max(1, Math.Min(96, cfg.UptimeHours));
+            _uptimeHoras.SetBounds(300, 71, 50, 24);
+            Label lu = new Label();
+            lu.Text = "horas, em qualquer horário do dia (ciclo)";
+            lu.SetBounds(356, 74, 290, 22);
+            EventHandler atualizarModo = delegate
+            {
+                _timePicker.Enabled = _radioFixo.Checked;
+                _folga.Enabled = _radioFixo.Checked;
+                _uptimeHoras.Enabled = _radioUptime.Checked;
+            };
+            _radioFixo.CheckedChanged += atualizarModo;
+            gQuando.Controls.Add(_radioFixo);
+            gQuando.Controls.Add(lt);
+            gQuando.Controls.Add(_timePicker);
+            gQuando.Controls.Add(lf);
+            gQuando.Controls.Add(_folga);
+            gQuando.Controls.Add(lf2);
+            gQuando.Controls.Add(_radioUptime);
+            gQuando.Controls.Add(_uptimeHoras);
+            gQuando.Controls.Add(lu);
+            Controls.Add(gQuando);
+            atualizarModo(null, EventArgs.Empty);
+            y += 116;
 
             // --- adiamento ---
             GroupBox gSnooze = new GroupBox();
             gSnooze.Text = " Adiamento (botão OK) ";
-            gSnooze.SetBounds(348, y, 320, 62);
+            gSnooze.SetBounds(12, y, 656, 62);
             Label l2 = new Label();
             l2.Text = "Reaparecer após (minutos):";
             l2.SetBounds(14, 26, 170, 20);
@@ -1597,10 +2087,10 @@ namespace AvisoDeReinicio
             // --- log ---
             GroupBox gLog = new GroupBox();
             gLog.Text = " Log de eventos (últimos 500) ";
-            gLog.SetBounds(12, y, 656, 640 - y - 12);
+            gLog.SetBounds(12, y, 656, 720 - y - 12);
 
             _grid = new DataGridView();
-            _grid.SetBounds(8, 22, 640, 640 - y - 12 - 30);
+            _grid.SetBounds(8, 22, 640, 720 - y - 12 - 30);
             _grid.AllowUserToAddRows = false;
             _grid.AllowUserToDeleteRows = false;
             _grid.ReadOnly = true;
@@ -1686,7 +2176,10 @@ namespace AvisoDeReinicio
 
         private void OnSave(object sender, EventArgs e)
         {
+            _cfg.Modo = _radioUptime.Checked ? ModoReinicio.Uptime : ModoReinicio.Fixo;
             _cfg.RestartTime = _timePicker.Value.TimeOfDay;
+            _cfg.SatisfiedHours = (int)_folga.Value;
+            _cfg.UptimeHours = (int)_uptimeHoras.Value;
             _cfg.SnoozeMinutes = (int)_snooze.Value;
             _cfg.ForceEnabled = _forceChk.Checked;
             _cfg.MaxOkBeforeForce = (int)_maxOk.Value;
@@ -1696,7 +2189,9 @@ namespace AvisoDeReinicio
             Autostart.SetEnabled(_autostartChk.Checked);
 
             Program.Log(Eventos.ConfiguracoesAlteradas,
-                "horário " + _cfg.RestartTime.ToString(@"hh\:mm") +
+                (_cfg.Modo == ModoReinicio.Uptime
+                    ? "ciclo de " + _cfg.UptimeHours + " h ligado"
+                    : "fixo às " + _cfg.RestartTime.ToString(@"hh\:mm") + " (folga " + _cfg.SatisfiedHours + " h)") +
                 " · adiamento " + _cfg.SnoozeMinutes + " min" +
                 " · forçado: " + (_cfg.ForceEnabled ? "sim" : "não") +
                 " · início automático: " + (_autostartChk.Checked ? "sim" : "não") +
