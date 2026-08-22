@@ -184,6 +184,26 @@ do expediente). Para só ser avisado, desmarque a opção na tela de
 configurações ou grave `AutoUpdate=0` no `config.ini`. Máquinas antigas cujo
 `config.ini` já traz `AutoUpdate=0` gravado mantêm a escolha explícita.
 
+### Empurrar update por comando
+
+Para atualizar uma máquina na hora (sem esperar o próximo boot), rode:
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File .\atualizar-maquinas.ps1
+```
+
+O script baixa o instalador da release do GitHub, confere o SHA256 contra o
+`SHA256SUMS.txt` do mesmo release, fecha o app, instala em modo silencioso e
+confirma a versão gravada no disco — falhando alto se algo não bater. Não
+precisa de administrador; a exceção é a instância em execução estar elevada,
+caso em que o script avisa (encerre o app pelo ícone da bandeja e rode de
+novo, ou use um prompt de admin). Na próxima release, normalmente só o `-Tag`
+muda (o hash é lido do próprio release):
+
+```
+powershell -NoProfile -ExecutionPolicy Bypass -File .\atualizar-maquinas.ps1 -Tag v1.6.0
+```
+
 Máquinas na v1.0.2 **não** se auto-atualizam — precisam de um empurrão
 manual até pelo menos a v1.3.0 (quando a versão passou a existir no exe).
 
@@ -217,6 +237,7 @@ release.ps1          -> monta o release (versao, instalador, SHA256, tag)
 instalador.iss       -> script do instalador (Inno Setup, pt-BR, sem admin)
 make-icon.ps1        -> gera o app.ico (círculo azul com seta de reinício)
 registrar-tarefa.ps1 -> cria a tarefa agendada de backup no logon
+atualizar-maquinas.ps1 -> empurra um update para a máquina local (baixa, confere e instala)
 app.ico              -> ícone do programa
 ```
 
