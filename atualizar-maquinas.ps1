@@ -29,6 +29,16 @@ $urlSums = "https://github.com/$($repo)/releases/download/$($Tag)/SHA256SUMS.txt
 $destino = Join-Path $env:TEMP $arquivo
 $exe = Join-Path $env:LOCALAPPDATA 'Programs\AvisoDeReinicio\AvisoDeReinicio.exe'
 
+# --- 0) ja esta na versao alvo? nada a fazer (idempotente para o parque) ---
+if (Test-Path $exe) {
+    $atual = (Get-Item $exe).VersionInfo.FileVersion
+    if ($atual -eq $versaoArquivo) {
+        Write-Output "OK: ja esta na versao $($atual) - nada a fazer"
+        exit 0
+    }
+    Write-Output "versao atual: $($atual) -> atualizando para $($versaoArquivo)"
+}
+
 # --- 1) hash esperado (SHA256SUMS.txt do release, como o updater do app) ---
 if ($Sha256 -eq '') {
     Write-Output "lendo hash de $urlSums"
